@@ -12,39 +12,54 @@
       @update:filters="filters = $event"
     />
 
-    <!-- Live Pulse Chart - Glass Panel -->
-    <div class="mx-4 mt-4 mobile:mx-2 mobile:mt-2">
-      <div class="glass-panel rounded-2xl overflow-hidden">
-        <LivePulseChart
-          :events="events"
-          :filters="filters"
-          :time-range="currentTimeRange"
-          @update-unique-apps="uniqueAppNames = $event"
-          @update-all-apps="allAppNames = $event"
-          @update-time-range="currentTimeRange = $event"
-          @update-heat-level="heatLevel = $event"
-          @update-events-per-minute="eventsPerMinute = $event"
-          @update-agent-counts="agentCounts = $event"
-          @clear-events="handleClearClick"
-          @toggle-filters="showFilters = !showFilters"
-        />
+    <!-- Upper Section: Live Pulse Chart and Agent Swim Lanes -->
+    <div
+      class="flex flex-col overflow-hidden mx-4 mt-4 mobile:mx-2 mobile:mt-2"
+      :style="{ flex: `0 0 ${upperSectionHeight}%`, minHeight: '200px' }"
+    >
+      <!-- Live Pulse Chart - Glass Panel -->
+      <div class="flex-shrink-0 mb-4 mobile:mb-2">
+        <div class="glass-panel rounded-2xl overflow-hidden">
+          <LivePulseChart
+            :events="events"
+            :filters="filters"
+            :time-range="currentTimeRange"
+            @update-unique-apps="uniqueAppNames = $event"
+            @update-all-apps="allAppNames = $event"
+            @update-time-range="currentTimeRange = $event"
+            @update-heat-level="heatLevel = $event"
+            @update-events-per-minute="eventsPerMinute = $event"
+            @update-agent-counts="agentCounts = $event"
+            @clear-events="handleClearClick"
+            @toggle-filters="showFilters = !showFilters"
+          />
+        </div>
+      </div>
+
+      <!-- Agent Swim Lane Container - Glass Panel -->
+      <div v-if="selectedAgentLanes.length > 0" class="flex-1 overflow-auto min-h-0">
+        <div class="glass-panel rounded-2xl p-4 mobile:p-2 h-full">
+          <AgentSwimLaneContainer
+            :selected-agents="selectedAgentLanes"
+            :events="events"
+            :time-range="currentTimeRange"
+            @update:selected-agents="selectedAgentLanes = $event"
+          />
+        </div>
       </div>
     </div>
 
-    <!-- Agent Swim Lane Container - Glass Panel -->
-    <div v-if="selectedAgentLanes.length > 0" class="mx-4 mt-4 mobile:mx-2 mobile:mt-2">
-      <div class="glass-panel rounded-2xl p-4 mobile:p-2">
-        <AgentSwimLaneContainer
-          :selected-agents="selectedAgentLanes"
-          :events="events"
-          :time-range="currentTimeRange"
-          @update:selected-agents="selectedAgentLanes = $event"
-        />
-      </div>
-    </div>
+    <!-- Resize Handle -->
+    <ResizeHandle
+      :percentage="upperSectionHeight"
+      @resize="handleResize"
+    />
 
     <!-- Timeline - Glass Panel -->
-    <div class="flex flex-col flex-1 overflow-hidden mx-4 my-4 mobile:mx-2 mobile:my-2">
+    <div
+      class="flex flex-col overflow-hidden mx-4 mb-4 mobile:mx-2 mobile:mb-2"
+      :style="{ flex: '1 1 auto', minHeight: '200px' }"
+    >
       <div class="glass-panel rounded-2xl flex-1 overflow-hidden">
         <EventTimeline
           :events="events"
@@ -97,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 import type { TimeRange } from './types';
 import { useWebSocket } from './composables/useWebSocket';
 import { useThemes } from './composables/useThemes';
@@ -109,6 +124,7 @@ import LivePulseChart from './components/LivePulseChart.vue';
 import ThemeManager from './components/ThemeManager.vue';
 import ToastNotification from './components/ToastNotification.vue';
 import AgentSwimLaneContainer from './components/AgentSwimLaneContainer.vue';
+import ResizeHandle from './components/ResizeHandle.vue';
 
 // WebSocket connection
 const { events, isConnected, error, clearEvents } = useWebSocket('ws://localhost:4000/stream');
@@ -137,6 +153,26 @@ const currentTimeRange = ref<TimeRange>('1M'); // Current time range from LivePu
 const heatLevel = ref({ intensity: 0, color: '#565f89', label: 'Low' });
 const agentCounts = ref<Record<string, number>>({});
 const eventsPerMinute = ref(0);
+
+// Resize state - percentage of viewport height for top section
+const upperSectionHeight = ref(40); // Default 40% for upper section, 60% for timeline
+
+// Load resize preference from localStorage
+onMounted(() => {
+  const saved = localStorage.getItem('observability-resize-percentage');
+  if (saved) {
+    const parsed = parseFloat(saved);
+    if (!isNaN(parsed) && parsed >= 20 && parsed <= 80) {
+      upperSectionHeight.value = parsed;
+    }
+  }
+});
+
+// Save resize preference to localStorage
+const handleResize = (percentage: number) => {
+  upperSectionHeight.value = percentage;
+  localStorage.setItem('observability-resize-percentage', percentage.toString());
+};
 
 // Toast notifications
 interface Toast {

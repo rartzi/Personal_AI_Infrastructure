@@ -8,13 +8,38 @@
 
 import { watch, existsSync } from 'fs';
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import type { HookEvent } from './types';
 
 // In-memory event store (last N events only)
 const MAX_EVENTS = 1000;
 const events: HookEvent[] = [];
+
+/**
+ * Get PAI .claude directory path - uses PAI_DIR env var or finds .claude in parent dirs
+ */
+export function getPAIDir(): string {
+  // Try environment variable first - PAI_DIR should already point to .claude directory
+  if (process.env.PAI_DIR) {
+    return process.env.PAI_DIR;
+  }
+
+  // Try to find .claude directory by walking up from current directory
+  let currentDir = process.cwd();
+  for (let i = 0; i < 10; i++) {
+    const claudeDir = join(currentDir, '.claude');
+    if (existsSync(claudeDir)) {
+      return claudeDir;  // Return the .claude directory itself
+    }
+    const parentDir = dirname(currentDir);
+    if (parentDir === currentDir) break; // Reached root
+    currentDir = parentDir;
+  }
+
+  // Fallback to ~/.claude
+  return join(homedir(), '.claude');
+}
 
 // Track the last read position for each file
 const filePositions = new Map<string, number>();
@@ -35,7 +60,7 @@ const sessionTodos = new Map<string, any[]>();
  * Get the path to today's all-events file
  */
 function getTodayEventsFile(): string {
-  const paiDir = join(homedir(), '.claude');
+  const paiDir = getPAIDir();
   const now = new Date();
   // Convert to PST
   const pstDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
@@ -43,7 +68,7 @@ function getTodayEventsFile(): string {
   const month = String(pstDate.getMonth() + 1).padStart(2, '0');
   const day = String(pstDate.getDate()).padStart(2, '0');
 
-  const monthDir = join(paiDir, 'history', 'raw-outputs', `${year}-${month}`);
+  const monthDir = join(paiDir, 'History', 'Raw-Outputs', `${year}-${month}`);
   return join(monthDir, `${year}-${month}-${day}_all-events.jsonl`);
 }
 
@@ -126,7 +151,8 @@ function storeEvents(newEvents: HookEvent[]): void {
  * Load agent sessions from agent-sessions.json
  */
 function loadAgentSessions(): void {
-  const sessionsFile = join(homedir(), '.claude', 'agent-sessions.json');
+  const paiDir = getPAIDir();
+  const sessionsFile = join(paiDir, 'agent-sessions.json');
 
   if (!existsSync(sessionsFile)) {
     console.log('⚠️  agent-sessions.json not found, agent names will be "unknown"');
@@ -152,7 +178,8 @@ function loadAgentSessions(): void {
  * Watch agent-sessions.json for changes
  */
 function watchAgentSessions(): void {
-  const sessionsFile = join(homedir(), '.claude', 'agent-sessions.json');
+  const paiDir = getPAIDir();
+  const sessionsFile = join(paiDir, 'agent-sessions.json');
 
   if (!existsSync(sessionsFile)) {
     console.log('⚠️  agent-sessions.json not found, skipping watch');
@@ -284,7 +311,8 @@ function watchFile(filePath: string): void {
  */
 export function startFileIngestion(callback?: (events: HookEvent[]) => void): void {
   console.log('🚀 Starting file-based event streaming (in-memory only)');
-  console.log('📂 Reading from ~/.claude/history/raw-outputs/');
+  const paiDir = getPAIDir();
+  console.log(`📂 Reading from ${join(paiDir, 'History', 'Raw-Outputs')}/`);
 
   // Set the callback for event notifications
   if (callback) {

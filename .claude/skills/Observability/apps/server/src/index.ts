@@ -9,7 +9,7 @@ import {
   importTheme,
   getThemeStats
 } from './theme';
-import { startFileIngestion, getRecentEvents, getFilterOptions } from './file-ingest';
+import { startFileIngestion, getRecentEvents, getFilterOptions, getPAIDir } from './file-ingest';
 
 // Store WebSocket clients
 const wsClients = new Set<any>();
@@ -316,12 +316,12 @@ const server = Bun.serve({
       }
     }
 
-    // POST /api/haiku/summarize - Proxy for Haiku summarization (reads API key from ~/.claude/.env)
+    // POST /api/haiku/summarize - Proxy for Haiku summarization (reads API key from PAI .env)
     if (url.pathname === '/api/haiku/summarize' && req.method === 'POST') {
       try {
-        // Load .env from ~/.claude/.env
-        const homeDir = process.env.HOME || '';
-        const envPath = `${homeDir}/.claude/.env`;
+        // Load .env from PAI directory
+        const paiDir = getPAIDir();
+        const envPath = `${paiDir}/.env`;
 
         let apiKey = '';
         try {
@@ -337,7 +337,7 @@ const server = Bun.serve({
         if (!apiKey) {
           return new Response(JSON.stringify({
             success: false,
-            error: 'ANTHROPIC_API_KEY not configured in ~/.claude/.env'
+            error: `ANTHROPIC_API_KEY not configured in ${envPath}`
           }), {
             status: 500,
             headers: { ...headers, 'Content-Type': 'application/json' }
