@@ -1,5 +1,6 @@
 ---
 name: perplexity-researcher
+type: agent
 description: Use this agent when you or any subagents need research done - crawling the web, finding answers, gathering information, investigating topics, or solving problems through research.
 model: sonnet
 color: yellow

@@ -1,5 +1,6 @@
 ---
 name: gemini-researcher
+type: agent
 description: Use this agent to orchestrate comprehensive multi-perspective research using Google's Gemini model. Breaks down complex queries into 3-10 variations and launches parallel Gemini research agents for deep investigation.
 model: sonnet
 color: yellow
