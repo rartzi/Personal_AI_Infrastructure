@@ -127,9 +127,10 @@ import ThemeManager from './components/ThemeManager.vue';
 import ToastNotification from './components/ToastNotification.vue';
 import AgentSwimLaneContainer from './components/AgentSwimLaneContainer.vue';
 import ResizeHandle from './components/ResizeHandle.vue';
+import { API_STREAM_URL } from './config';
 
 // WebSocket connection
-const { events, isConnected, error, clearEvents } = useWebSocket('ws://localhost:4000/stream');
+const { events, isConnected, error, clearEvents } = useWebSocket(API_STREAM_URL);
 
 // Theme management (sets up theme system)
 useThemes();
