@@ -1,7 +1,7 @@
 /**
  * Haiku API Integration for Timeline Intelligence
  * Provides fast, cheap summarization for event clustering
- * Uses backend proxy to read API key from ~/.claude/.env
+ * Uses backend proxy to read API key from {PAI_DIR}/.env
  */
 
 import type { HookEvent } from '../types';
@@ -137,7 +137,7 @@ function formatSingleEvent(event: HookEvent): string {
 }
 
 /**
- * Check if backend proxy is available (API key configured in ~/.claude/.env)
+ * Check if backend proxy is available (API key configured in {PAI_DIR}/.env)
  */
 export function isHaikuConfigured(): boolean {
   // Always return true - backend will handle API key check

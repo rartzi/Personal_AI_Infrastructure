@@ -362,10 +362,10 @@ export function useAdvancedMetrics(
         }
 
         // Check for workflow executions (from skill-workflow-notification script)
-        // Payload structure: { tool_name: "Bash", tool_input: { command: "~/.claude/tools/skill-workflow-notification WORKFLOWNAME SKILLNAME" } }
+        // Payload structure: { tool_name: "Bash", tool_input: { command: "${PAI_DIR}/tools/skill-workflow-notification WORKFLOWNAME SKILLNAME" } }
         if (event.hook_event_type === 'PostToolUse' && event.payload?.tool_name === 'Bash') {
           const command = event.payload?.tool_input?.command || '';
-          // Match skill-workflow-notification calls: ~/.claude/tools/skill-workflow-notification WORKFLOWNAME SKILLNAME
+          // Match skill-workflow-notification calls: ${PAI_DIR}/tools/skill-workflow-notification WORKFLOWNAME SKILLNAME
           const wfMatch = command.match(/\/skill-workflow-notification\s+(\w+)\s+(\w+)/);
           if (wfMatch) {
             const workflowName = wfMatch[1];

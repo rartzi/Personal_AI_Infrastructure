@@ -212,6 +212,17 @@ function enrichEventWithAgentName(event: HookEvent): HookEvent {
     };
   }
 
+  // Special case: SubagentStop/SubagentStart events - extract agent_id from payload
+  if ((event.hook_event_type === 'SubagentStop' || event.hook_event_type === 'SubagentStart') &&
+      event.payload?.agent_id) {
+    const agentId = event.payload.agent_id;
+    return {
+      ...event,
+      source_app: agentId,  // Use agent_id as source_app so dashboard treats them as separate agents
+      agent_name: agentId
+    };
+  }
+
   // Default to 'kai' for main agent sessions (not 'unknown')
   const agentName = agentSessions.get(event.session_id) || 'kai';
   return {

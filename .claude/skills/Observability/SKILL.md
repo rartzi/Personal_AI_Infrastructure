@@ -39,7 +39,7 @@ Real-time monitoring of PAI multi-agent activity with WebSocket streaming.
 - WebSocket live updates
 
 ### Data Sources
-- **Primary**: `~/.claude/history/raw-outputs/YYYY-MM/YYYY-MM-DD_all-events.jsonl`
+- **Primary**: `{PAI_DIR}/History/Raw-Outputs/YYYY-MM/YYYY-MM-DD_all-events.jsonl`
 - **Format**: JSONL with structured event data
 - **Hooks**: Events logged automatically by PAI hook system
 
@@ -118,7 +118,7 @@ bun run dev
 - Restart: `./manage.sh restart`
 
 ### No events showing
-- Verify events file exists: `~/.claude/history/raw-outputs/YYYY-MM/YYYY-MM-DD_all-events.jsonl`
+- Verify events file exists: `{PAI_DIR}/History/Raw-Outputs/YYYY-MM/YYYY-MM-DD_all-events.jsonl`
 - Check hooks are configured in `~/.claude/settings.json`
 - Try triggering an event (use any tool or agent)
 
@@ -155,6 +155,6 @@ bun run dev
 ## Hook Integration
 
 For the observability dashboard to receive events, configure your PAI hooks to log to:
-`~/.claude/history/raw-outputs/YYYY-MM/YYYY-MM-DD_all-events.jsonl`
+`{PAI_DIR}/History/Raw-Outputs/YYYY-MM/YYYY-MM-DD_all-events.jsonl`
 
-The `capture-all-events.ts` hook in `~/.claude/hooks/` handles this automatically.
+The `capture-all-events.ts` hook in `{PAI_DIR}/hooks/` handles this automatically.

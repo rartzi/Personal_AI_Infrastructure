@@ -1,7 +1,7 @@
 <template>
-  <div class="modern-dashboard">
+  <div ref="rootElement" class="modern-dashboard">
     <!-- Header Bar -->
-    <div class="agent-bar px-5 py-2 mobile:px-3 mobile:py-1.5 border-b border-white/[0.03] bg-[var(--theme-bg-primary)]">
+    <div ref="headerBar" class="agent-bar px-5 py-2 mobile:px-3 mobile:py-1.5 border-b border-white/[0.03] bg-[var(--theme-bg-primary)]">
       <!-- Skills, Workflows, Tools row (with Tokens/Cost right-justified) -->
       <div class="flex items-center gap-4 flex-wrap">
         <!-- Skills -->
@@ -244,8 +244,14 @@ const emit = defineEmits<{
 
 const canvas = ref<HTMLCanvasElement>();
 const chartContainer = ref<HTMLDivElement>();
-const windowHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 600);
-const chartHeight = computed(() => windowHeight.value <= 400 ? 240 : 260);
+const rootElement = ref<HTMLDivElement>();
+const headerBar = ref<HTMLDivElement>();
+const availableChartHeight = ref(260); // Will be updated by ResizeObserver
+
+const chartHeight = computed(() => {
+  // Use the calculated available height, with minimum 200px
+  return Math.max(200, availableChartHeight.value);
+});
 
 const timeRanges: TimeRange[] = ['1M', '2M', '4M', '8M', '16M'];
 
@@ -667,11 +673,17 @@ const animateNewEvent = (x: number, y: number) => {
   animate();
 };
 
-const handleWindowResize = () => {
-  windowHeight.value = window.innerHeight;
-};
-
 const handleResize = () => {
+  // Calculate available height for chart: root element height minus header bar height minus padding
+  if (rootElement.value && headerBar.value) {
+    const rootHeight = rootElement.value.clientHeight;
+    const headerHeight = headerBar.value.clientHeight;
+    const chartSectionPadding = 32; // py-4 = 16px top + 16px bottom (mobile: py-3 = 12px each)
+
+    // Available space = total height - header - padding - some buffer
+    availableChartHeight.value = rootHeight - headerHeight - chartSectionPadding - 20;
+  }
+
   if (!renderer || !canvas.value) return;
 
   const dimensions = getDimensions();
@@ -853,7 +865,13 @@ const themeObserver = new MutationObserver(() => {
 });
 
 onMounted(() => {
-  if (!canvas.value || !chartContainer.value) return;
+  if (!canvas.value || !rootElement.value || !headerBar.value) return;
+
+  // Initialize available height from actual DOM elements
+  const rootHeight = rootElement.value.clientHeight;
+  const headerHeight = headerBar.value.clientHeight;
+  const chartSectionPadding = 32;
+  availableChartHeight.value = rootHeight - headerHeight - chartSectionPadding - 20;
 
   const dimensions = getDimensions();
   const config = getActiveConfig();
@@ -866,18 +884,15 @@ onMounted(() => {
   // Poll for activities every 2 seconds (stored globally for cleanup)
   activityPollInterval = setInterval(fetchActivities, 2000);
 
-  // Set up resize observer
+  // Set up resize observer on root element to detect container size changes
   resizeObserver = new ResizeObserver(handleResize);
-  resizeObserver.observe(chartContainer.value);
+  resizeObserver.observe(rootElement.value);
 
   // Observe theme changes
   themeObserver.observe(document.documentElement, {
     attributes: true,
     attributeFilter: ['class']
   });
-
-  // Listen for window height changes
-  window.addEventListener('resize', handleWindowResize);
 
   // Initial render
   render();
@@ -921,9 +936,6 @@ onUnmounted(() => {
   }
 
   themeObserver.disconnect();
-
-  // Remove window resize listener
-  window.removeEventListener('resize', handleWindowResize);
 });
 </script>
 
@@ -932,6 +944,7 @@ onUnmounted(() => {
 .modern-dashboard {
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 /* Tools Bar - Horizontal list of active tools */
@@ -941,7 +954,10 @@ onUnmounted(() => {
 
 /* Chart Section - Clean with breathing room */
 .chart-section {
-  /* Clean styling inherited from parent glass panel */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 </style>

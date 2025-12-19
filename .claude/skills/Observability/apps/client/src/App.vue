@@ -17,9 +17,11 @@
       class="flex flex-col overflow-hidden mx-4 mt-4 mobile:mx-2 mobile:mt-2"
       :style="{ flex: `0 0 ${upperSectionHeight}%`, minHeight: '200px' }"
     >
-      <!-- Live Pulse Chart - Glass Panel -->
-      <div class="flex-shrink-0 mb-4 mobile:mb-2">
-        <div class="glass-panel rounded-2xl overflow-hidden">
+      <!-- Live Pulse Chart - Glass Panel (flex-1 when no swim lanes, fixed height otherwise) -->
+      <div
+        :class="selectedAgentLanes.length > 0 ? 'flex-shrink-0 mb-4 mobile:mb-2' : 'flex-1 mb-4 mobile:mb-2 min-h-0'"
+      >
+        <div class="glass-panel rounded-2xl overflow-hidden h-full">
           <LivePulseChart
             :events="events"
             :filters="filters"
