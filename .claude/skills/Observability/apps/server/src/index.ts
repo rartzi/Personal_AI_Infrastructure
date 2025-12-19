@@ -34,7 +34,8 @@ startFileIngestion((events) => {
 // Create Bun server with HTTP and WebSocket support
 const server = Bun.serve({
   port: 4000,
-  
+  hostname: '0.0.0.0',
+
   async fetch(req: Request) {
     const url = new URL(req.url);
     
