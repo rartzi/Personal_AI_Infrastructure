@@ -66,3 +66,7 @@ credentials/
 .claude/pai_updates/
 .claude/pai_backups/
 .claude/.pai-sync-history
+
+# WRONG history location (prevent mistakes)
+# The correct location is .claude/History/ (capital H)
+/history/

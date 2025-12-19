@@ -155,11 +155,18 @@ description: [What it does]. USE WHEN [intent triggers using OR]. [Capabilities]
 ## File Organization (Always Active)
 
 - **Scratchpad** (`${PAI_DIR}/scratchpad/`) - Temporary files only. Delete when done.
-- **History** (`${PAI_DIR}/history/`) - Permanent valuable outputs.
-- **Backups** (`${PAI_DIR}/history/backups/`) - All backups go here, NEVER inside skill directories.
+- **History** (`${PAI_DIR}/History/`) - Permanent valuable outputs. **⚠️ CRITICAL: Capital 'H' in History/**
+- **Backups** (`${PAI_DIR}/History/backups/`) - All backups go here, NEVER inside skill directories.
+
+**⚠️ CRITICAL PATH RULE:**
+- ✅ **CORRECT:** `${PAI_DIR}/History/` (inside `.claude/`, capital H)
+- ❌ **WRONG:** `./history/` (root level, lowercase h)
+- ❌ **WRONG:** `/history/` (root level, lowercase h)
 
 **Rules:**
-- Save valuable work to history, not scratchpad
+- Save valuable work to History, not scratchpad
+- **ALWAYS use `${PAI_DIR}/History/` with capital H**
+- Never create history directories at root level
 - Never create `backups/` directories inside skills
 - Never use `.bak` suffixes
 
@@ -260,28 +267,37 @@ You have EXPLICIT PERMISSION to say "I don't know" or "I'm not confident" when:
 
 **CRITICAL: When the user asks about ANYTHING done in the past, CHECK THE HISTORY SYSTEM FIRST.**
 
-The history system at `${PAI_DIR}/history/` contains ALL past work - sessions, learnings, research, decisions.
+The history system at `${PAI_DIR}/History/` contains ALL past work - sessions, learnings, research, decisions.
+
+**⚠️ IMPORTANT PATH:** Always use `${PAI_DIR}/History/` with **capital H** - this is inside `.claude/` directory.
 
 ### How to Search History
 
 ```bash
 # Quick keyword search across all history
-rg -i "keyword" ${PAI_DIR}/history/
+rg -i "keyword" ${PAI_DIR}/History/
 
 # Search sessions specifically
-rg -i "keyword" ${PAI_DIR}/history/sessions/
+rg -i "keyword" ${PAI_DIR}/History/Sessions/
 
 # List recent files
-ls -lt ${PAI_DIR}/history/sessions/2025-11/ | head -20
+ls -lt ${PAI_DIR}/History/Sessions/2025-12/ | head -20
+
+# Search research
+rg -i "keyword" ${PAI_DIR}/History/Research/
 ```
 
 ### Directory Quick Reference
 
 | What you're looking for | Where to search |
 |------------------------|-----------------|
-| Session summaries | `history/sessions/YYYY-MM/` |
-| Problem-solving narratives | `history/learnings/YYYY-MM/` |
-| Research & investigations | `history/research/YYYY-MM/` |
+| Session summaries | `${PAI_DIR}/History/Sessions/YYYY-MM/` |
+| Problem-solving narratives | `${PAI_DIR}/History/Learnings/YYYY-MM/` |
+| Research & investigations | `${PAI_DIR}/History/Research/YYYY-MM/` |
+| Architectural decisions | `${PAI_DIR}/History/Decisions/YYYY-MM/` |
+| Feature implementations | `${PAI_DIR}/History/Execution/Features/YYYY-MM/` |
+| Bug fixes | `${PAI_DIR}/History/Execution/Bugs/YYYY-MM/` |
+| Raw execution logs | `${PAI_DIR}/History/Raw-Outputs/YYYY-MM/` |
 
 ---
 
