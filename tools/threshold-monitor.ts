@@ -21,6 +21,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { aggregateDay, aggregatePeriod, type DailySummary } from './metric-aggregator';
+import { loadTelos, calculateTelosAlignment, type TelosProfile } from './telos-extractor';
 
 const HOME = process.env.HOME!;
 const METRICS_DIR = join(HOME, '.claude/metrics');
@@ -32,9 +33,12 @@ export interface ThresholdAlert {
   pattern: string;
   count: number;
   confidence: number;
+  telosAlignment?: number;      // NEW: Telos multiplier applied
+  telosAdjustedConfidence?: number;  // NEW: Final confidence after telos
   suggestion: string;
   estimatedSavings?: string;
   evidence: string[];
+  telosNote?: string;          // NEW: Why this matters for telos
 }
 
 interface ThresholdConfig {
@@ -43,6 +47,49 @@ interface ThresholdConfig {
     high: { sameDayOccurrences: number; minConfidence: number; weeklyOccurrences: number };
     strategic: { monthlyOccurrences: number; minConfidence: number };
   };
+}
+
+/**
+ * Get user's highest identity score
+ */
+function getHighestIdentity(telos: TelosProfile): string {
+  const identities = Object.entries(telos.identity);
+  const highest = identities.reduce((max, curr) =>
+    curr[1] > max[1] ? curr : max
+  );
+  return highest[0];
+}
+
+/**
+ * Generate telos-aware suggestion text
+ */
+function generateTelosSuggestion(
+  pattern: string,
+  count: number,
+  telos: TelosProfile,
+  telosMultiplier: number
+): { suggestion: string; telosNote: string } {
+  const highestIdentity = getHighestIdentity(telos);
+
+  if (telosMultiplier > 1.2) {
+    // High alignment - emphasize acceleration toward purpose
+    return {
+      suggestion: `You've done ${pattern} ${count} times today. This aligns with your ${highestIdentity} identity - automate to accelerate your mission.`,
+      telosNote: `Strong alignment with ${highestIdentity} work (${telosMultiplier.toFixed(2)}x multiplier)`
+    };
+  } else if (telosMultiplier < 0.8) {
+    // Low alignment - question the activity
+    return {
+      suggestion: `${pattern} appeared ${count} times but doesn't align with your ${highestIdentity} focus. Should this be delegated or eliminated?`,
+      telosNote: `Low alignment with your ${highestIdentity} identity (${telosMultiplier.toFixed(2)}x multiplier)`
+    };
+  } else {
+    // Neutral - standard automation suggestion
+    return {
+      suggestion: `${pattern} appeared ${count} times today. Consider automation.`,
+      telosNote: `Moderate alignment with your work (${telosMultiplier.toFixed(2)}x multiplier)`
+    };
+  }
 }
 
 /**
@@ -64,50 +111,86 @@ function loadConfig(): ThresholdConfig {
 }
 
 /**
- * Check today's metrics against same-day thresholds
+ * Check today's metrics against same-day thresholds (TELOS-AWARE)
  */
-function checkSameDayThresholds(today: DailySummary, config: ThresholdConfig): ThresholdAlert[] {
+function checkSameDayThresholds(today: DailySummary, config: ThresholdConfig, telos: TelosProfile): ThresholdAlert[] {
   const alerts: ThresholdAlert[] = [];
 
-  // Check sequences
+  // Check sequences with telos alignment
   for (const seq of today.sameToolSequences) {
-    // Urgent: 5+ occurrences, 90%+ confidence
+    const baseConfidence = seq.confidence;
+    const telosMultiplier = calculateTelosAlignment(seq.pattern, telos);
+    const telosAdjustedConfidence = Math.min(95, baseConfidence * telosMultiplier);
+
+    // Generate telos-aware suggestion
+    const { suggestion, telosNote } = generateTelosSuggestion(seq.pattern, seq.count, telos, telosMultiplier);
+
+    // Urgent: telos-adjusted confidence >= 90
     if (seq.count >= config.thresholds.urgent.sameDayOccurrences &&
-        seq.confidence >= config.thresholds.urgent.minConfidence) {
+        telosAdjustedConfidence >= config.thresholds.urgent.minConfidence) {
       alerts.push({
         priority: 'urgent',
         pattern: seq.pattern,
         count: seq.count,
-        confidence: seq.confidence,
-        suggestion: `You've done ${seq.pattern} ${seq.count} times today. Automate this workflow?`,
+        confidence: baseConfidence,
+        telosAlignment: telosMultiplier,
+        telosAdjustedConfidence,
+        suggestion,
+        telosNote,
         estimatedSavings: `~${seq.count * 2} minutes/day`,
         evidence: [`${seq.count} occurrences today`]
       });
     }
-    // High: 3+ occurrences, 80%+ confidence
+    // High: telos-adjusted confidence >= 80
     else if (seq.count >= config.thresholds.high.sameDayOccurrences &&
-             seq.confidence >= config.thresholds.high.minConfidence) {
+             telosAdjustedConfidence >= config.thresholds.high.minConfidence) {
       alerts.push({
         priority: 'high',
         pattern: seq.pattern,
         count: seq.count,
-        confidence: seq.confidence,
-        suggestion: `${seq.pattern} appeared ${seq.count} times today. Consider automation.`,
+        confidence: baseConfidence,
+        telosAlignment: telosMultiplier,
+        telosAdjustedConfidence,
+        suggestion,
+        telosNote,
         estimatedSavings: `Potential for time savings`,
         evidence: [`${seq.count} occurrences today`]
       });
     }
-  }
-
-  // Check high-frequency tools
-  for (const tool of today.highFrequencyTools) {
-    if (tool.avgPerSession >= 10) {
+    // NEW: Misalignment warning (low telos multiplier but high frequency)
+    else if (seq.count >= 5 && telosMultiplier < 0.8) {
       alerts.push({
         priority: 'high',
-        pattern: `${tool.tool} high-frequency`,
+        pattern: seq.pattern,
+        count: seq.count,
+        confidence: baseConfidence,
+        telosAlignment: telosMultiplier,
+        telosAdjustedConfidence,
+        suggestion: `⚠️ ${seq.pattern} appeared ${seq.count} times but has low telos-alignment. Consider delegating or eliminating this work.`,
+        telosNote: `This pattern doesn't align with your ${getHighestIdentity(telos)} identity`,
+        estimatedSavings: null,
+        evidence: [`${seq.count} occurrences, ${telosMultiplier.toFixed(2)}x telos multiplier`]
+      });
+    }
+  }
+
+  // Check high-frequency tools with telos awareness
+  for (const tool of today.highFrequencyTools) {
+    if (tool.avgPerSession >= 10) {
+      const pattern = `${tool.tool} high-frequency`;
+      const telosMultiplier = calculateTelosAlignment(tool.tool, telos);
+      const telosAdjustedConfidence = Math.min(95, 85 * telosMultiplier);
+      const { suggestion, telosNote } = generateTelosSuggestion(tool.tool, tool.count, telos, telosMultiplier);
+
+      alerts.push({
+        priority: telosAdjustedConfidence >= 90 ? 'urgent' : 'high',
+        pattern,
         count: tool.count,
         confidence: 85,
-        suggestion: `${tool.tool} used ${tool.count} times today. Consider enhancing this workflow.`,
+        telosAlignment: telosMultiplier,
+        telosAdjustedConfidence,
+        suggestion: `${tool.tool} used ${tool.count} times today. ${telosNote}`,
+        telosNote,
         estimatedSavings: 'Potential for significant automation',
         evidence: [`${tool.count} calls across ${today.sessionCount} sessions`]
       });
@@ -118,9 +201,9 @@ function checkSameDayThresholds(today: DailySummary, config: ThresholdConfig): T
 }
 
 /**
- * Check weekly metrics against weekly thresholds
+ * Check weekly metrics against weekly thresholds (TELOS-AWARE)
  */
-function checkWeeklyThresholds(summaries: DailySummary[], config: ThresholdConfig): ThresholdAlert[] {
+function checkWeeklyThresholds(summaries: DailySummary[], config: ThresholdConfig, telos: TelosProfile): ThresholdAlert[] {
   const alerts: ThresholdAlert[] = [];
 
   // Aggregate sequences across week
@@ -134,30 +217,42 @@ function checkWeeklyThresholds(summaries: DailySummary[], config: ThresholdConfi
     }
   }
 
-  // Check thresholds
+  // Check thresholds with telos awareness
   for (const [pattern, count] of Object.entries(weeklySequences)) {
     const days = sequenceDays[pattern];
+    const baseConfidence = count >= 15 ? 95 : 85;
+    const telosMultiplier = calculateTelosAlignment(pattern, telos);
+    const telosAdjustedConfidence = Math.min(95, baseConfidence * telosMultiplier);
+    const { suggestion, telosNote } = generateTelosSuggestion(pattern, count, telos, telosMultiplier);
 
-    // Urgent: 15+ weekly, 95% confidence
-    if (count >= config.thresholds.urgent.weeklyOccurrences) {
+    // Urgent: 15+ weekly with high telos-adjusted confidence
+    if (count >= config.thresholds.urgent.weeklyOccurrences &&
+        telosAdjustedConfidence >= config.thresholds.urgent.minConfidence) {
       alerts.push({
         priority: 'urgent',
         pattern,
         count,
-        confidence: 95,
-        suggestion: `${pattern} appeared ${count} times this week across ${days} days. This needs automation NOW.`,
+        confidence: baseConfidence,
+        telosAlignment: telosMultiplier,
+        telosAdjustedConfidence,
+        suggestion: `${pattern} appeared ${count} times this week. ${telosNote}`,
+        telosNote,
         estimatedSavings: `~${count * 2} minutes/week`,
         evidence: [`${count} occurrences over ${days} days`]
       });
     }
-    // High: 10+ weekly, 85% confidence
-    else if (count >= config.thresholds.high.weeklyOccurrences) {
+    // High: 10+ weekly with moderate telos-adjusted confidence
+    else if (count >= config.thresholds.high.weeklyOccurrences &&
+             telosAdjustedConfidence >= config.thresholds.high.minConfidence) {
       alerts.push({
         priority: 'high',
         pattern,
         count,
-        confidence: 85,
-        suggestion: `${pattern} appeared ${count} times this week. Build automation?`,
+        confidence: baseConfidence,
+        telosAlignment: telosMultiplier,
+        telosAdjustedConfidence,
+        suggestion,
+        telosNote,
         estimatedSavings: `~${count * 2} minutes/week`,
         evidence: [`${count} occurrences over ${days} days`]
       });
@@ -168,9 +263,9 @@ function checkWeeklyThresholds(summaries: DailySummary[], config: ThresholdConfi
 }
 
 /**
- * Check monthly metrics against strategic thresholds
+ * Check monthly metrics against strategic thresholds (TELOS-AWARE)
  */
-function checkMonthlyThresholds(summaries: DailySummary[], config: ThresholdConfig): ThresholdAlert[] {
+function checkMonthlyThresholds(summaries: DailySummary[], config: ThresholdConfig, telos: TelosProfile): ThresholdAlert[] {
   const alerts: ThresholdAlert[] = [];
 
   // Aggregate sequences across month
@@ -182,15 +277,22 @@ function checkMonthlyThresholds(summaries: DailySummary[], config: ThresholdConf
     }
   }
 
-  // Check strategic threshold
+  // Check strategic threshold with telos
   for (const [pattern, count] of Object.entries(monthlySequences)) {
     if (count >= config.thresholds.strategic.monthlyOccurrences) {
+      const telosMultiplier = calculateTelosAlignment(pattern, telos);
+      const telosAdjustedConfidence = Math.min(90, 75 * telosMultiplier);
+      const { suggestion, telosNote } = generateTelosSuggestion(pattern, count, telos, telosMultiplier);
+
       alerts.push({
         priority: 'strategic',
         pattern,
         count,
         confidence: 75,
-        suggestion: `${pattern} appeared ${count} times this month. Strategic automation opportunity.`,
+        telosAlignment: telosMultiplier,
+        telosAdjustedConfidence,
+        suggestion,
+        telosNote,
         estimatedSavings: `~${count * 2} minutes/month`,
         evidence: [`${count} occurrences this month`]
       });
@@ -201,24 +303,27 @@ function checkMonthlyThresholds(summaries: DailySummary[], config: ThresholdConf
 }
 
 /**
- * Main threshold check - combines all timeframes
+ * Main threshold check - combines all timeframes (TELOS-AWARE)
  */
 export function checkThresholds(): ThresholdAlert[] {
   const config = loadConfig();
+  const telos = loadTelos(24);  // Cache for 24 hours
   const alerts: ThresholdAlert[] = [];
 
+  console.error(`🎯 Using telos profile: ${getHighestIdentity(telos)} (${telos.identity[getHighestIdentity(telos) as keyof typeof telos.identity]}%)\n`);
+
   try {
-    // Check today
+    // Check today with telos awareness
     const today = aggregateDay(new Date());
-    alerts.push(...checkSameDayThresholds(today, config));
+    alerts.push(...checkSameDayThresholds(today, config, telos));
 
     // Check last 7 days for weekly patterns
     const weeklySummaries = aggregatePeriod(7);
-    alerts.push(...checkWeeklyThresholds(weeklySummaries, config));
+    alerts.push(...checkWeeklyThresholds(weeklySummaries, config, telos));
 
     // Check last 30 days for strategic patterns
     const monthlySummaries = aggregatePeriod(30);
-    alerts.push(...checkMonthlyThresholds(monthlySummaries, config));
+    alerts.push(...checkMonthlyThresholds(monthlySummaries, config, telos));
   } catch (e) {
     console.error(`Error checking thresholds: ${e}`);
   }
@@ -270,8 +375,14 @@ function main() {
     console.log('🔴 URGENT (Immediate Action Recommended)\n');
     for (const alert of urgent) {
       console.log(`Pattern: ${alert.pattern}`);
-      console.log(`Count: ${alert.count} | Confidence: ${alert.confidence}%`);
+      console.log(`Count: ${alert.count} | Base: ${alert.confidence}% | Telos-Adjusted: ${alert.telosAdjustedConfidence?.toFixed(0)}%`);
+      if (alert.telosAlignment) {
+        console.log(`Telos Alignment: ${alert.telosAlignment.toFixed(2)}x`);
+      }
       console.log(`Suggestion: ${alert.suggestion}`);
+      if (alert.telosNote) {
+        console.log(`📍 ${alert.telosNote}`);
+      }
       if (alert.estimatedSavings) {
         console.log(`Savings: ${alert.estimatedSavings}`);
       }
@@ -286,9 +397,15 @@ function main() {
     console.log('🟡 HIGH PRIORITY (Next Session)\n');
     for (const alert of high) {
       console.log(`Pattern: ${alert.pattern}`);
-      console.log(`Count: ${alert.count} | Confidence: ${alert.confidence}%`);
+      console.log(`Count: ${alert.count} | Base: ${alert.confidence}% | Telos-Adjusted: ${alert.telosAdjustedConfidence?.toFixed(0)}%`);
+      if (alert.telosAlignment) {
+        console.log(`Telos Alignment: ${alert.telosAlignment.toFixed(2)}x`);
+      }
       console.log(`Suggestion: ${alert.suggestion}`);
-      if (verbose) {
+      if (alert.telosNote && verbose) {
+        console.log(`📍 ${alert.telosNote}`);
+      }
+      if (verbose && alert.evidence) {
         console.log(`Evidence: ${alert.evidence.join(', ')}`);
       }
       console.log();
