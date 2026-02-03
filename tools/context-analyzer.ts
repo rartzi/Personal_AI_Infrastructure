@@ -3,65 +3,59 @@
 /**
  * context-analyzer.ts
  *
- * Analyzes History to provide context-aware suggestions based on work patterns.
- * Inspired by Clawdbot's Seneca proactive intelligence.
+ * HIGH-VALUE CONTEXT ANALYZER
  *
- * Analyzes:
- * - Failed attempts → Suggest alternatives
- * - Incomplete work → Remind to finish
- * - Similar past issues → Reference solutions
- * - Repeated patterns → Suggest automation
- * - Git state → Suggest commits/pushes
- * - Stale branches → Suggest cleanup
+ * Surfaces personally meaningful intelligence:
+ * - Research threads worth revisiting
+ * - Unfinished creative ideas
+ * - Goals and progress
+ * - Derived suggestions for new capabilities
+ *
+ * Git status is available via --git flag but NOT in default output.
  *
  * Usage:
- *   bun run tools/context-analyzer.ts           # Analyze and suggest
+ *   bun run tools/context-analyzer.ts           # High-value suggestions
+ *   bun run tools/context-analyzer.ts --git     # Include git status
  *   bun run tools/context-analyzer.ts --json    # JSON output
  *   bun run tools/context-analyzer.ts --verbose # Detailed analysis
  */
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join, basename } from 'path';
 import { execSync } from 'child_process';
+import { extractAll, type ExtractedItem, type ExtractionResult } from './suggestion-extractor';
+import { analyzeAll, getTopSuggestions, type DerivedSuggestion, type DerivedResult } from './derived-intelligence';
 
-const PAI_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude');
-const HISTORY_DIR = join(PAI_DIR, 'History');
-
+// Types
 interface Suggestion {
-  type: 'failed_attempt' | 'incomplete_work' | 'similar_issue' | 'automation' | 'git_action' | 'cleanup';
+  type: 'research' | 'idea' | 'goal' | 'build' | 'git_action';
   priority: 'high' | 'medium' | 'low';
   title: string;
   description: string;
   action?: string;
   context?: string;
   references?: string[];
+  confidence?: number;
 }
 
 interface AnalysisResult {
   timestamp: Date;
   suggestions: Suggestion[];
-  patterns: {
-    recentFailures: string[];
-    incompleteWork: string[];
-    repeatedTasks: string[];
-  };
-  gitState: {
+  extracted: ExtractionResult;
+  derived: DerivedResult;
+  gitState?: {
     branch: string;
     uncommittedChanges: boolean;
     unpushedCommits: number;
-    staleBranches: string[];
   };
 }
 
 /**
- * Get git repository state
+ * Get git repository state (only when requested)
  */
 function analyzeGitState() {
   const state = {
     branch: 'unknown',
     uncommittedChanges: false,
-    unpushedCommits: 0,
-    staleBranches: [] as string[]
+    unpushedCommits: 0
   };
 
   try {
@@ -71,276 +65,125 @@ function analyzeGitState() {
 
     const unpushed = execSync('git rev-list --count @{u}..HEAD 2>/dev/null || echo "0"', { encoding: 'utf-8' }).trim();
     state.unpushedCommits = parseInt(unpushed);
-
-    // Check for stale local branches (no activity in 30 days)
-    const branches = execSync('git for-each-ref --sort=-committerdate refs/heads/ --format="%(refname:short)|%(committerdate:relative)"', { encoding: 'utf-8' })
-      .trim()
-      .split('\n');
-
-    const currentBranch = state.branch;
-    for (const branchLine of branches) {
-      const [branch, lastActivity] = branchLine.split('|');
-      if (branch !== currentBranch && branch !== 'main' && branch !== 'master') {
-        if (lastActivity.includes('month') || lastActivity.includes('year')) {
-          state.staleBranches.push(`${branch} (${lastActivity})`);
-        }
-      }
-    }
   } catch (e) {
-    console.error('Could not analyze git state:', e);
+    // Git not available or not a repo
   }
 
   return state;
 }
 
 /**
- * Get recent History files
+ * Convert extracted items to suggestions
  */
-function getRecentFiles(dir: string, daysBack: number = 7): Array<{ path: string; mtime: Date; content: string }> {
-  if (!existsSync(dir)) return [];
+function extractedToSuggestions(extracted: ExtractionResult): Suggestion[] {
+  const suggestions: Suggestion[] = [];
 
-  const cutoffDate = Date.now() - (daysBack * 24 * 60 * 60 * 1000);
-  const files: Array<{ path: string; mtime: Date; content: string }> = [];
+  // Research threads - prioritize stale ones for revival
+  const staleResearch = extracted.research
+    .filter(r => r.status === 'stale' && r.depth !== 'shallow')
+    .slice(0, 2);
 
-  function walk(currentDir: string) {
-    try {
-      const entries = readdirSync(currentDir);
-      for (const entry of entries) {
-        const fullPath = join(currentDir, entry);
-        const stat = statSync(fullPath);
-
-        if (stat.isDirectory()) {
-          walk(fullPath);
-        } else if (entry.endsWith('.md') && stat.mtime.getTime() > cutoffDate) {
-          try {
-            const content = readFileSync(fullPath, 'utf-8');
-            files.push({ path: fullPath, mtime: stat.mtime, content });
-          } catch (e) {
-            // Skip files we can't read
-          }
-        }
-      }
-    } catch (error) {
-      // Skip directories we can't read
-    }
+  for (const r of staleResearch) {
+    suggestions.push({
+      type: 'research',
+      priority: r.depth === 'deep' ? 'high' : 'medium',
+      title: `Research revival: ${r.topic}`,
+      description: `You researched this ${r.ageDays} days ago - worth revisiting for new developments`,
+      action: 'Check for updates or continue exploring',
+      context: r.summary.substring(0, 150),
+      references: [r.sourcePath.split('/').slice(-2).join('/')]
+    });
   }
 
-  walk(dir);
-  return files.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-}
+  // Unfinished ideas - prioritize active/stale with next steps
+  const unfinishedIdeas = extracted.ideas
+    .filter(i => i.status !== 'abandoned' && i.nextSteps && i.nextSteps.length > 0)
+    .slice(0, 2);
 
-/**
- * Analyze sessions for failed attempts
- */
-function detectFailedAttempts(sessions: Array<{ path: string; mtime: Date; content: string }>): Suggestion[] {
-  const suggestions: Suggestion[] = [];
-  const failureKeywords = ['error', 'failed', 'didn\'t work', 'unsuccessful', 'exception', 'bug', 'issue', 'problem'];
+  for (const i of unfinishedIdeas) {
+    suggestions.push({
+      type: 'idea',
+      priority: i.status === 'active' ? 'high' : 'medium',
+      title: `Unfinished: ${i.topic}`,
+      description: `Creative thread from ${i.ageDays} days ago with remaining steps`,
+      action: i.nextSteps?.[0] || 'Continue where you left off',
+      context: i.summary.substring(0, 150),
+      references: [i.sourcePath.split('/').slice(-2).join('/')]
+    });
+  }
 
-  for (const session of sessions.slice(0, 5)) {
-    const lowerContent = session.content.toLowerCase();
-    const hasFailure = failureKeywords.some(keyword => lowerContent.includes(keyword));
+  // Goals - show active goals
+  const activeGoals = extracted.goals
+    .filter(g => g.status === 'active')
+    .slice(0, 2);
 
-    if (hasFailure) {
-      // Extract context around failure
-      const lines = session.content.split('\n');
-      const failureContext = lines.find(line =>
-        failureKeywords.some(keyword => line.toLowerCase().includes(keyword))
-      ) || 'Failed attempt detected';
-
-      suggestions.push({
-        type: 'failed_attempt',
-        priority: 'high',
-        title: 'Recent failure detected',
-        description: `You encountered issues recently. Consider trying an alternative approach.`,
-        context: failureContext.substring(0, 200),
-        references: [basename(session.path)],
-        action: 'Review the session and try a different strategy'
-      });
-    }
+  for (const g of activeGoals) {
+    suggestions.push({
+      type: 'goal',
+      priority: 'medium',
+      title: `Goal: ${g.topic.substring(0, 60)}`,
+      description: g.summary,
+      action: g.nextSteps?.[0] || 'Continue working toward this goal',
+      references: [g.sourcePath.split('/').slice(-2).join('/')]
+    });
   }
 
   return suggestions;
 }
 
 /**
- * Analyze for incomplete work
+ * Convert derived suggestions to main suggestions
  */
-function detectIncompleteWork(sessions: Array<{ path: string; mtime: Date; content: string }>): Suggestion[] {
+function derivedToSuggestions(derived: DerivedResult): Suggestion[] {
   const suggestions: Suggestion[] = [];
-  const incompleteKeywords = ['todo', 'wip', 'in progress', 'unfinished', 'continue', 'next:', 'remaining'];
 
-  for (const session of sessions.slice(0, 3)) {
-    const lowerContent = session.content.toLowerCase();
-    const hasIncomplete = incompleteKeywords.some(keyword => lowerContent.includes(keyword));
+  // Get top derived suggestions
+  const topDerived = [
+    ...derived.patterns.slice(0, 1),
+    ...derived.gaps.slice(0, 1),
+    ...derived.ambitions.slice(0, 1)
+  ].sort((a, b) => b.confidence - a.confidence).slice(0, 2);
 
-    if (hasIncomplete) {
-      // Extract TODO items
-      const lines = session.content.split('\n');
-      const todoLines = lines.filter(line =>
-        incompleteKeywords.some(keyword => line.toLowerCase().includes(keyword))
-      );
-
-      if (todoLines.length > 0) {
-        suggestions.push({
-          type: 'incomplete_work',
-          priority: 'medium',
-          title: 'Unfinished work from recent session',
-          description: `You have incomplete work from ${session.mtime.toLocaleDateString()}`,
-          context: todoLines[0].substring(0, 200),
-          references: [basename(session.path)],
-          action: 'Continue where you left off'
-        });
-      }
-    }
+  for (const d of topDerived) {
+    suggestions.push({
+      type: 'build',
+      priority: d.priority,
+      title: `Build opportunity: ${d.title}`,
+      description: d.description,
+      action: d.suggestedAction,
+      context: d.reasoning,
+      confidence: d.confidence,
+      references: d.evidence
+    });
   }
 
   return suggestions;
 }
 
 /**
- * Analyze for repeated tasks that could be automated
+ * Generate git suggestions (only when --git flag)
  */
-function detectRepeatedPatterns(sessions: Array<{ path: string; mtime: Date; content: string }>): Suggestion[] {
-  const suggestions: Suggestion[] = [];
-
-  // Look for repeated command patterns
-  const commandCounts: { [key: string]: number } = {};
-  const commandPatterns = [
-    /git (add|commit|push|pull|status)/gi,
-    /npm (install|run|test|build)/gi,
-    /bun (run|install|test)/gi,
-    /docker (build|run|ps|logs)/gi,
-  ];
-
-  for (const session of sessions.slice(0, 10)) {
-    for (const pattern of commandPatterns) {
-      const matches = session.content.match(pattern);
-      if (matches) {
-        for (const match of matches) {
-          const normalized = match.toLowerCase();
-          commandCounts[normalized] = (commandCounts[normalized] || 0) + 1;
-        }
-      }
-    }
-  }
-
-  // Find repeated commands (appeared 3+ times)
-  for (const [command, count] of Object.entries(commandCounts)) {
-    if (count >= 3) {
-      suggestions.push({
-        type: 'automation',
-        priority: 'low',
-        title: `Repeated task: ${command}`,
-        description: `You've run "${command}" ${count} times in recent sessions`,
-        action: `Consider creating a script or alias to automate this`,
-        context: `Usage pattern detected across multiple sessions`
-      });
-    }
-  }
-
-  return suggestions;
-}
-
-/**
- * Analyze for similar past issues
- */
-function detectSimilarIssues(
-  sessions: Array<{ path: string; mtime: Date; content: string }>,
-  learnings: Array<{ path: string; mtime: Date; content: string }>
-): Suggestion[] {
-  const suggestions: Suggestion[] = [];
-
-  // Extract recent problem descriptions
-  const recentProblems = sessions.slice(0, 3).map(s => {
-    const lines = s.content.split('\n');
-    return {
-      session: s,
-      keywords: extractKeywords(s.content)
-    };
-  });
-
-  // Check if any learnings address similar issues
-  for (const problem of recentProblems) {
-    for (const learning of learnings) {
-      const learningKeywords = extractKeywords(learning.content);
-      const overlap = problem.keywords.filter(k => learningKeywords.includes(k));
-
-      if (overlap.length >= 2) {
-        suggestions.push({
-          type: 'similar_issue',
-          priority: 'high',
-          title: 'Similar issue solved before',
-          description: `Your current work resembles a past issue documented in learnings`,
-          references: [basename(learning.path), basename(problem.session.path)],
-          action: `Review ${basename(learning.path)} for potential solutions`,
-          context: `Matching keywords: ${overlap.slice(0, 3).join(', ')}`
-        });
-      }
-    }
-  }
-
-  return suggestions;
-}
-
-/**
- * Extract meaningful keywords from content
- */
-function extractKeywords(content: string): string[] {
-  const words = content.toLowerCase()
-    .replace(/[^\w\s-]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 4); // Only words 5+ chars
-
-  // Count frequency
-  const freq: { [key: string]: number } = {};
-  for (const word of words) {
-    freq[word] = (freq[word] || 0) + 1;
-  }
-
-  // Return top keywords (appeared 2+ times)
-  return Object.entries(freq)
-    .filter(([_, count]) => count >= 2)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map(([word]) => word);
-}
-
-/**
- * Generate git-related suggestions
- */
-function generateGitSuggestions(gitState: AnalysisResult['gitState']): Suggestion[] {
+function gitToSuggestions(gitState: AnalysisResult['gitState']): Suggestion[] {
+  if (!gitState) return [];
   const suggestions: Suggestion[] = [];
 
   if (gitState.uncommittedChanges) {
     suggestions.push({
       type: 'git_action',
-      priority: 'medium',
-      title: 'Uncommitted changes detected',
-      description: `You have uncommitted changes on branch ${gitState.branch}`,
-      action: 'Review and commit your changes: git status && git add . && git commit',
-      context: 'Uncommitted work could be lost'
+      priority: 'low',
+      title: 'Uncommitted changes',
+      description: `Changes on branch ${gitState.branch}`,
+      action: 'git status && git add . && git commit'
     });
   }
 
   if (gitState.unpushedCommits > 0) {
     suggestions.push({
       type: 'git_action',
-      priority: 'medium',
-      title: `${gitState.unpushedCommits} unpushed commits`,
-      description: `You have ${gitState.unpushedCommits} commit${gitState.unpushedCommits > 1 ? 's' : ''} not pushed to remote`,
-      action: 'Push your commits: git push',
-      context: 'Share your work and back it up remotely'
-    });
-  }
-
-  if (gitState.staleBranches.length > 0) {
-    suggestions.push({
-      type: 'cleanup',
       priority: 'low',
-      title: `${gitState.staleBranches.length} stale branches`,
-      description: 'You have old branches that may need cleanup',
-      action: `Review and delete: ${gitState.staleBranches.slice(0, 3).join(', ')}`,
-      context: 'Keep repository tidy by removing old branches'
+      title: `${gitState.unpushedCommits} unpushed commits`,
+      description: 'Local commits not on remote',
+      action: 'git push'
     });
   }
 
@@ -350,26 +193,54 @@ function generateGitSuggestions(gitState: AnalysisResult['gitState']): Suggestio
 /**
  * Main analysis function
  */
-function analyzeContext(): AnalysisResult {
-  console.error('🔍 Analyzing recent History for context...\n');
+function analyzeContext(includeGit: boolean = false): AnalysisResult {
+  console.error('🧠 Analyzing context for high-value suggestions...\n');
 
-  // Load recent sessions and learnings
-  const sessions = getRecentFiles(join(HISTORY_DIR, 'Sessions'), 14); // 2 weeks
-  const learnings = getRecentFiles(join(HISTORY_DIR, 'Learnings'), 30); // 1 month
+  // Extract personal intelligence
+  const extracted = extractAll();
+  console.error(`📚 Found ${extracted.research.length} research threads, ${extracted.ideas.length} ideas, ${extracted.goals.length} goals\n`);
 
-  console.error(`📊 Found ${sessions.length} recent sessions, ${learnings.length} learnings\n`);
+  // Analyze for derived suggestions
+  const derived = analyzeAll();
+  const derivedCount = derived.patterns.length + derived.gaps.length + derived.ambitions.length;
+  console.error(`💡 Generated ${derivedCount} build opportunities\n`);
 
-  // Analyze git state
-  const gitState = analyzeGitState();
+  // NEW: Check metric-driven thresholds (Phase 3)
+  let metricAlerts: any[] = [];
+  try {
+    // Dynamic import is async, so we'll catch it or use require
+    const thresholdModule = require('./threshold-monitor.ts');
+    if (thresholdModule && thresholdModule.checkThresholds) {
+      metricAlerts = thresholdModule.checkThresholds().filter(a => a.priority === 'high' || a.priority === 'urgent');
+      if (metricAlerts.length > 0) {
+        console.error(`📊 Detected ${metricAlerts.length} metric-driven patterns\n`);
+      }
+    }
+  } catch (e) {
+    // Threshold monitor not available yet - skip silently
+  }
 
-  // Generate suggestions
+  // Convert to suggestions
   const suggestions: Suggestion[] = [
-    ...detectFailedAttempts(sessions),
-    ...detectIncompleteWork(sessions),
-    ...detectRepeatedPatterns(sessions),
-    ...detectSimilarIssues(sessions, learnings),
-    ...generateGitSuggestions(gitState)
+    ...extractedToSuggestions(extracted),
+    ...derivedToSuggestions(derived),
+    ...metricAlerts.map(alert => ({
+      type: 'build' as const,
+      priority: alert.priority === 'urgent' ? 'high' as const : 'medium' as const,
+      title: `Metric-driven: ${alert.pattern}`,
+      description: alert.suggestion,
+      action: 'Build automation for this pattern',
+      confidence: alert.confidence,
+      references: alert.evidence
+    }))
   ];
+
+  // Optionally include git
+  let gitState;
+  if (includeGit) {
+    gitState = analyzeGitState();
+    suggestions.push(...gitToSuggestions(gitState));
+  }
 
   // Sort by priority
   const priorityOrder = { high: 0, medium: 1, low: 2 };
@@ -378,13 +249,45 @@ function analyzeContext(): AnalysisResult {
   return {
     timestamp: new Date(),
     suggestions,
-    patterns: {
-      recentFailures: detectFailedAttempts(sessions).map(s => s.context || ''),
-      incompleteWork: detectIncompleteWork(sessions).map(s => s.context || ''),
-      repeatedTasks: detectRepeatedPatterns(sessions).map(s => s.title)
-    },
+    extracted,
+    derived,
     gitState
   };
+}
+
+/**
+ * Format a single suggestion
+ */
+function formatSuggestion(s: Suggestion): string {
+  const icons: Record<string, string> = {
+    research: '🔬',
+    idea: '💭',
+    goal: '🎯',
+    build: '🔨',
+    git_action: '📦'
+  };
+
+  let output = `### ${icons[s.type] || '📌'} ${s.title}\n\n`;
+  output += `**${s.description}**\n\n`;
+
+  if (s.context) {
+    output += `*${s.context}*\n\n`;
+  }
+
+  if (s.action) {
+    output += `→ **Action:** ${s.action}\n\n`;
+  }
+
+  if (s.confidence) {
+    output += `*Confidence: ${s.confidence}%*\n\n`;
+  }
+
+  if (s.references && s.references.length > 0) {
+    output += `📂 ${s.references.slice(0, 2).join(', ')}\n\n`;
+  }
+
+  output += `---\n\n`;
+  return output;
 }
 
 /**
@@ -397,10 +300,7 @@ function formatSuggestionsMarkdown(result: AnalysisResult): string {
 
   if (result.suggestions.length === 0) {
     output += `✅ **All clear!** No immediate suggestions.\n\n`;
-    output += `You're in good shape:\n`;
-    output += `- No recent failures detected\n`;
-    output += `- No incomplete work flagged\n`;
-    output += `- Git state is clean\n\n`;
+    output += `Your research is current, ideas are progressing, and no new build opportunities detected.\n\n`;
     return output;
   }
 
@@ -431,32 +331,9 @@ function formatSuggestionsMarkdown(result: AnalysisResult): string {
   }
 
   output += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-  output += `💡 **Pro Tip:** These suggestions are based on your recent work patterns.\n`;
-  output += `The more you use PAI, the smarter these suggestions become!\n`;
+  output += `💡 These suggestions surface your research, ideas, and build opportunities.\n`;
+  output += `Use \`/suggestions --git\` to include git status.\n`;
 
-  return output;
-}
-
-/**
- * Format a single suggestion
- */
-function formatSuggestion(s: Suggestion): string {
-  let output = `### ${s.title}\n\n`;
-  output += `**${s.description}**\n\n`;
-
-  if (s.context) {
-    output += `*Context:* ${s.context}\n\n`;
-  }
-
-  if (s.action) {
-    output += `📝 *Suggested Action:* ${s.action}\n\n`;
-  }
-
-  if (s.references && s.references.length > 0) {
-    output += `📂 *References:* ${s.references.join(', ')}\n\n`;
-  }
-
-  output += `---\n\n`;
   return output;
 }
 
@@ -467,9 +344,10 @@ function main() {
   const args = process.argv.slice(2);
   const jsonOutput = args.includes('--json');
   const verbose = args.includes('--verbose');
+  const includeGit = args.includes('--git');
 
   try {
-    const result = analyzeContext();
+    const result = analyzeContext(includeGit);
 
     if (jsonOutput) {
       console.log(JSON.stringify(result, null, 2));
@@ -479,15 +357,19 @@ function main() {
 
       if (verbose) {
         console.error('\n📊 Analysis Details:\n');
-        console.error(`- Recent failures: ${result.patterns.recentFailures.length}`);
-        console.error(`- Incomplete work items: ${result.patterns.incompleteWork.length}`);
-        console.error(`- Repeated tasks: ${result.patterns.repeatedTasks.length}`);
-        console.error(`- Git uncommitted: ${result.gitState.uncommittedChanges}`);
-        console.error(`- Git unpushed: ${result.gitState.unpushedCommits}`);
-        console.error(`- Stale branches: ${result.gitState.staleBranches.length}\n`);
+        console.error(`- Research threads: ${result.extracted.research.length}`);
+        console.error(`- Unfinished ideas: ${result.extracted.ideas.length}`);
+        console.error(`- Goals tracked: ${result.extracted.goals.length}`);
+        console.error(`- Pattern suggestions: ${result.derived.patterns.length}`);
+        console.error(`- Gap suggestions: ${result.derived.gaps.length}`);
+        console.error(`- Ambition suggestions: ${result.derived.ambitions.length}`);
+        if (result.gitState) {
+          console.error(`- Git uncommitted: ${result.gitState.uncommittedChanges}`);
+          console.error(`- Git unpushed: ${result.gitState.unpushedCommits}`);
+        }
       }
 
-      console.error(`\n✅ Generated ${result.suggestions.length} suggestions`);
+      console.error(`\n✅ Generated ${result.suggestions.length} high-value suggestions`);
     }
   } catch (error) {
     console.error('❌ Error analyzing context:', error);
