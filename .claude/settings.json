@@ -135,6 +135,11 @@
           },
           {
             "type": "command",
+            "command": "${PAI_DIR}/hooks/load-context-suggestions.ts",
+            "comment": "OPTIONAL: Context-aware suggestions (uncomment to enable proactive guidance)"
+          },
+          {
+            "type": "command",
             "command": "${PAI_DIR}/hooks/initialize-session.ts"
           },
           {
