@@ -197,9 +197,28 @@ Environment variables (set in settings.json):
 ## Integration Points
 
 - **Daily Memory Injection**: Uses same History scanning logic
+- **Context-Aware Suggestions**: Pulls research revival and build opportunities
 - **Voice System**: Sends notifications via localhost:8888
 - **History System**: Saves briefs to History/Briefs/
 - **Notification System**: Terminal + voice output
+
+### High-Value Intelligence Integration
+
+Monday brief now includes output from the context-suggestions system:
+
+```typescript
+import { extractAll } from './suggestion-extractor';
+import { getTopSuggestions } from './derived-intelligence';
+
+// In Monday brief generation:
+const extracted = extractAll();
+const derived = getTopSuggestions(2);
+
+// Add to brief:
+// - Research Revival: extracted.research.filter(r => r.status === 'stale')
+// - Unfinished Ideas: extracted.ideas.filter(i => i.nextSteps?.length > 0)
+// - Build Opportunities: derived suggestions
+```
 
 ## Example Output
 
@@ -265,6 +284,26 @@ Carried Over:
   • Multi-surface access exploration
   • Smart context selection enhancement
   • ML-based relevance scoring
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔬 RESEARCH REVIVAL
+
+Topics worth revisiting:
+  • TPU Architecture Analysis (45 days ago)
+    - New developments in AI hardware space
+  • Israel-Gaza War Status (46 days ago)
+    - Situation may have evolved
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔨 BUILD OPPORTUNITIES
+
+Based on your work patterns:
+  • Automate iterative editing workflow
+    - You've done this manually 26 times
+  • Create comparison skill
+    - Pattern detected across 3 sessions
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

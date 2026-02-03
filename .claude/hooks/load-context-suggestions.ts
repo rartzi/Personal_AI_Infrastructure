@@ -3,20 +3,16 @@
 /**
  * load-context-suggestions.ts
  *
- * SessionStart hook that analyzes recent History and provides context-aware
- * suggestions based on work patterns. Inspired by Clawdbot's Seneca proactive intelligence.
+ * SessionStart hook that provides HIGH-VALUE context-aware suggestions:
+ * - Research threads worth revisiting
+ * - Unfinished creative ideas
+ * - Goals and progress tracking
+ * - Build opportunities (patterns, gaps, ambitions)
  *
- * Provides:
- * - Failed attempt detection → Try alternatives
- * - Incomplete work reminders → Continue where left off
- * - Similar issue references → Leverage past solutions
- * - Automation opportunities → Improve workflow
- * - Git state awareness → Commit, push, cleanup
+ * NO MORE GIT NOISE in default output.
  *
- * Setup:
- * 1. Add to SessionStart hooks in settings.json (after load-daily-memory.ts)
- * 2. Suggestions appear in session start output
- * 3. High-priority items flagged for immediate attention
+ * Terminal Output: Uses process.stderr for user visibility
+ * Context Injection: Uses process.stdout for Claude's context
  */
 
 import { execSync } from 'child_process';
@@ -26,6 +22,91 @@ import { join } from 'path';
 const PAI_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude');
 const CONTEXT_ANALYZER = join(PAI_DIR, '../tools/context-analyzer.ts');
 
+// ANSI color codes for terminal
+const colors = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  red: '\x1b[31m',
+  yellow: '\x1b[33m',
+  green: '\x1b[32m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+};
+
+/**
+ * Format a suggestion for terminal display (compact)
+ */
+function formatTerminalSuggestion(line: string): string {
+  // Detect priority and format with colors
+  if (line.includes('High Priority')) {
+    return `${colors.red}${colors.bold}▌ HIGH PRIORITY${colors.reset}`;
+  }
+  if (line.includes('Medium Priority')) {
+    return `${colors.yellow}${colors.bold}▌ MEDIUM PRIORITY${colors.reset}`;
+  }
+  if (line.includes('Low Priority')) {
+    return `${colors.green}${colors.bold}▌ LOW PRIORITY${colors.reset}`;
+  }
+
+  // Format suggestion titles with icons
+  if (line.includes('### 🔬')) {
+    return `${colors.cyan}  🔬 ${line.replace('### 🔬 ', '')}${colors.reset}`;
+  }
+  if (line.includes('### 💭')) {
+    return `${colors.magenta}  💭 ${line.replace('### 💭 ', '')}${colors.reset}`;
+  }
+  if (line.includes('### 🎯')) {
+    return `${colors.blue}  🎯 ${line.replace('### 🎯 ', '')}${colors.reset}`;
+  }
+  if (line.includes('### 🔨')) {
+    return `${colors.yellow}  🔨 ${line.replace('### 🔨 ', '')}${colors.reset}`;
+  }
+
+  // Format actions
+  if (line.startsWith('→ **Action:**')) {
+    return `${colors.dim}     → ${line.replace('→ **Action:** ', '')}${colors.reset}`;
+  }
+
+  return null;
+}
+
+/**
+ * Parse and display suggestions in terminal
+ */
+function displayInTerminal(markdown: string) {
+  const lines = markdown.split('\n');
+  let displayLines: string[] = [];
+  let inSuggestion = false;
+
+  for (const line of lines) {
+    const formatted = formatTerminalSuggestion(line);
+    if (formatted) {
+      displayLines.push(formatted);
+      inSuggestion = true;
+    } else if (line.startsWith('**') && inSuggestion && !line.includes('---')) {
+      // Description line
+      const desc = line.replace(/\*\*/g, '').substring(0, 80);
+      displayLines.push(`${colors.dim}     ${desc}${colors.reset}`);
+    }
+  }
+
+  // Output to stderr (visible to user in terminal)
+  if (displayLines.length > 0) {
+    console.error('');
+    console.error(`${colors.bold}━━━ CONTEXT SUGGESTIONS ━━━${colors.reset}`);
+    console.error('');
+    for (const line of displayLines) {
+      console.error(line);
+    }
+    console.error('');
+    console.error(`${colors.dim}💡 Type /suggestions for full details${colors.reset}`);
+    console.error(`${colors.bold}━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
+    console.error('');
+  }
+}
+
 async function main() {
   try {
     // Check if this is a subagent session - if so, exit silently
@@ -34,7 +115,6 @@ async function main() {
                       process.env.CLAUDE_AGENT_TYPE !== undefined;
 
     if (isSubagent) {
-      console.error('🤖 Subagent session - skipping context suggestions');
       process.exit(0);
     }
 
@@ -44,28 +124,26 @@ async function main() {
       process.exit(0);
     }
 
-    console.error('💡 Analyzing context for suggestions...');
-
     // Run context analyzer
     const suggestions = execSync(`bun run "${CONTEXT_ANALYZER}"`, {
       encoding: 'utf-8',
-      cwd: join(PAI_DIR, '..')
+      cwd: join(PAI_DIR, '..'),
+      stdio: ['pipe', 'pipe', 'pipe'] // Capture stderr too
     });
 
-    // Extract priority counts for summary
-    const highCount = (suggestions.match(/## 🔴 High Priority/g) || []).length;
-    const mediumCount = (suggestions.match(/## 🟡 Medium Priority/g) || []).length;
-    const lowCount = (suggestions.match(/## 🟢 Low Priority/g) || []).length;
-    const totalCount = highCount + mediumCount + lowCount;
+    // Check if we have suggestions
+    const hasHigh = suggestions.includes('High Priority');
+    const hasMedium = suggestions.includes('Medium Priority');
 
-    if (totalCount === 0) {
-      console.error('✅ All clear - no suggestions at this time');
+    if (!hasHigh && !hasMedium) {
+      console.error('✅ All clear - no high-priority suggestions');
       process.exit(0);
     }
 
-    console.error(`✅ Generated ${totalCount} suggestions (${highCount} high, ${mediumCount} medium, ${lowCount} low priority)`);
+    // Display compact version in terminal
+    displayInTerminal(suggestions);
 
-    // Output as system-reminder
+    // Output full suggestions to stdout for Claude's context
     const message = `<system-reminder>
 CONTEXT-AWARE SUGGESTIONS (Proactive Guidance)
 
@@ -77,14 +155,11 @@ These suggestions are automatically generated based on your recent work patterns
 Consider them as you plan your session. High-priority items need immediate attention.
 </system-reminder>`;
 
-    // Write to stdout (will be captured by Claude Code)
     console.log(message);
-
-    console.error('✅ Context suggestions injected into session');
     process.exit(0);
   } catch (error) {
-    console.error('❌ Error loading context suggestions:', error);
     // Don't fail session start on error
+    console.error('⚠️ Context suggestions unavailable');
     process.exit(0);
   }
 }
