@@ -3,10 +3,11 @@
 /**
  * test-predictions.ts
  *
- * Phase 0-1 Test Script: Validates prediction layer components
+ * Phase 0-2 Test Script: Validates prediction layer components
  *
- * Tests goal-predictor, trajectory-forecaster, and tool-health-monitor
- * on current system state to verify they're working correctly before integration.
+ * Tests goal-predictor, trajectory-forecaster, tool-health-monitor,
+ * and opportunity-cost-analyzer on current system state to verify
+ * they're working correctly before integration.
  */
 
 import { loadTelos } from './telos-extractor';
@@ -14,6 +15,7 @@ import { predictFromGoals, summarizePredictions } from './goal-predictor';
 import { aggregatePeriod } from './metric-aggregator';
 import { forecastTrajectories, getActionableForecasts, summarizeForecasts } from './trajectory-forecaster';
 import { monitorToolHealth, summarizeHealth } from './tool-health-monitor';
+import { analyzeOpportunityCost, summarizeOpportunityCost } from './opportunity-cost-analyzer';
 
 console.log('\n' + '═'.repeat(70));
 console.log('🧪 PREDICTION LAYER TEST SUITE');
@@ -119,19 +121,41 @@ if (healthReports.length > 0) {
 }
 console.log();
 
-// Test 6: Integration Check
-console.log('Test 6: Integration Check');
+// Test 6: Opportunity Cost Analysis
+console.log('Test 6: Opportunity Cost Analysis');
+console.log('─'.repeat(70));
+
+const costReport = analyzeOpportunityCost(summaries, telos);
+console.log(`✓ Opportunity cost analysis completed`);
+console.log(`  Period: ${costReport.periodDays} days`);
+console.log(`  Total tool calls: ${costReport.totalToolCalls}`);
+console.log(`  Misalignments detected: ${costReport.misalignments.length}`);
+
+if (costReport.misalignments.length > 0) {
+  const costSummary = summarizeOpportunityCost(costReport);
+  console.log(`  High priority: ${costSummary.highPriority}`);
+  console.log(`  Avg delta: ${costSummary.avgDelta.toFixed(1)}%`);
+  console.log(`  Most misaligned: ${costSummary.mostMisaligned}`);
+} else {
+  console.log(`  ✅ Well aligned - time allocation matches telos`);
+}
+console.log();
+
+// Test 7: Integration Check
+console.log('Test 7: Integration Check');
 console.log('─'.repeat(70));
 
 const hasPredictions = goalPredictions.length > 0;
 const hasForecasts = summaries.length >= 7;
 const hasHealthMonitoring = healthReports.length >= 0;  // Always functional
+const hasOpportunityCost = costReport.totalToolCalls > 0;  // Has data to analyze
 
 console.log(`Goal predictions: ${hasPredictions ? '✓ Working' : '⚠️  No data (expected if no goals)'}`);
 console.log(`Trajectory forecasts: ${hasForecasts ? '✓ Working' : '⚠️  Need more metric data'}`);
 console.log(`Tool health monitoring: ✓ Working`);
+console.log(`Opportunity cost analysis: ${hasOpportunityCost ? '✓ Working' : '⚠️  No data'}`);
 
-if (hasPredictions || hasForecasts || hasHealthMonitoring) {
+if (hasPredictions || hasForecasts || hasHealthMonitoring || hasOpportunityCost) {
   console.log(`\n✅ Prediction layer is functional`);
   console.log(`   Ready for integration with threshold-monitor.ts`);
 } else {
@@ -141,11 +165,11 @@ if (hasPredictions || hasForecasts || hasHealthMonitoring) {
 }
 
 console.log('\n' + '═'.repeat(70));
-console.log('🎯 PHASE 0-1 VALIDATION COMPLETE');
+console.log('🎯 PHASE 0-2 VALIDATION COMPLETE');
 console.log('═'.repeat(70) + '\n');
 
 // Exit status
-if (hasPredictions || hasForecasts || hasHealthMonitoring) {
+if (hasPredictions || hasForecasts || hasHealthMonitoring || hasOpportunityCost) {
   process.exit(0);  // Success
 } else {
   process.exit(1);  // Needs data but components work
