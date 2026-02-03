@@ -23,6 +23,7 @@
 import { readFileSync, existsSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'fs';
 import { join, basename } from 'path';
 import { execSync } from 'child_process';
+import { checkThresholds, type ThresholdAlert } from './threshold-monitor';
 
 // Configuration
 const PAI_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude');
@@ -240,7 +241,7 @@ function getWeeklySummary(): WeeklySummary {
 /**
  * Generate Monday brief markdown
  */
-function generateBrief(health: SystemHealth, summary: WeeklySummary): string {
+function generateBrief(health: SystemHealth, summary: WeeklySummary, alerts: ThresholdAlert[]): string {
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -300,6 +301,45 @@ function generateBrief(health: SystemHealth, summary: WeeklySummary): string {
     }
 
     brief += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  }
+
+  // Flywheel Insights (Reactive + Predictive)
+  if (alerts.length > 0) {
+    const reactiveAlerts = alerts.filter(a => a.predictionType === 'reactive');
+    const predictiveAlerts = alerts.filter(a => a.predictionType === 'predictive');
+    const strategicAlerts = alerts.filter(a => a.priority === 'strategic');
+
+    if (strategicAlerts.length > 0) {
+      brief += `## 🔮 FLYWHEEL INSIGHTS\n\n`;
+
+      // Show predictive first (forward-looking)
+      if (predictiveAlerts.length > 0) {
+        brief += `**Predictive Suggestions** (Forward-Looking):\n`;
+        for (const alert of predictiveAlerts.slice(0, 3)) {
+          brief += `  🔮 ${alert.pattern}\n`;
+          brief += `     ${alert.suggestion}\n`;
+          if (alert.telosNote) {
+            brief += `     📍 ${alert.telosNote}\n`;
+          }
+          brief += `\n`;
+        }
+      }
+
+      // Then reactive patterns
+      if (reactiveAlerts.filter(a => a.priority === 'strategic').length > 0) {
+        brief += `**Pattern Detections** (Last 30 Days):\n`;
+        for (const alert of reactiveAlerts.filter(a => a.priority === 'strategic').slice(0, 3)) {
+          brief += `  📊 ${alert.pattern}\n`;
+          brief += `     Count: ${alert.count} | Confidence: ${alert.confidence}%\n`;
+          if (alert.telosNote) {
+            brief += `     📍 ${alert.telosNote}\n`;
+          }
+          brief += `\n`;
+        }
+      }
+
+      brief += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    }
   }
 
   // This Week
@@ -390,8 +430,12 @@ async function main() {
   console.log('📚 Loading weekly history...');
   const summary = getWeeklySummary();
 
+  console.log('🔮 Checking flywheel insights...');
+  const alerts = checkThresholds();
+  console.log(`   Found ${alerts.length} patterns (${alerts.filter(a => a.predictionType === 'predictive').length} predictive)`);
+
   console.log('✍️  Generating brief...');
-  const brief = generateBrief(health, summary);
+  const brief = generateBrief(health, summary, alerts);
 
   // Save to file
   console.log('💾 Saving to History/Briefs/...');

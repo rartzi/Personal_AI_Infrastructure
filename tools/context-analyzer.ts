@@ -193,7 +193,7 @@ function gitToSuggestions(gitState: AnalysisResult['gitState']): Suggestion[] {
 /**
  * Main analysis function
  */
-function analyzeContext(includeGit: boolean = false): AnalysisResult {
+async function analyzeContext(includeGit: boolean = false): Promise<AnalysisResult> {
   console.error('🧠 Analyzing context for high-value suggestions...\n');
 
   // Extract personal intelligence
@@ -205,34 +205,41 @@ function analyzeContext(includeGit: boolean = false): AnalysisResult {
   const derivedCount = derived.patterns.length + derived.gaps.length + derived.ambitions.length;
   console.error(`💡 Generated ${derivedCount} build opportunities\n`);
 
-  // NEW: Check metric-driven thresholds (Phase 3)
+  // NEW: Check metric-driven thresholds (Phase 3 + Phase 3.5 predictions)
   let metricAlerts: any[] = [];
   try {
-    // Dynamic import is async, so we'll catch it or use require
-    const thresholdModule = require('./threshold-monitor.ts');
-    if (thresholdModule && thresholdModule.checkThresholds) {
-      metricAlerts = thresholdModule.checkThresholds().filter(a => a.priority === 'high' || a.priority === 'urgent');
-      if (metricAlerts.length > 0) {
-        console.error(`📊 Detected ${metricAlerts.length} metric-driven patterns\n`);
-      }
+    const { checkThresholds } = await import('./threshold-monitor');
+    metricAlerts = checkThresholds().filter(a => a.priority === 'high' || a.priority === 'urgent');
+    if (metricAlerts.length > 0) {
+      const reactive = metricAlerts.filter(a => a.predictionType === 'reactive').length;
+      const predictive = metricAlerts.filter(a => a.predictionType === 'predictive').length;
+      console.error(`📊 Detected ${reactive} reactive patterns, ${predictive} predictive suggestions\n`);
     }
   } catch (e) {
-    // Threshold monitor not available yet - skip silently
+    console.error(`⚠️ Threshold check error: ${e}\n`);
+    // Threshold monitor not available - skip
   }
 
   // Convert to suggestions
   const suggestions: Suggestion[] = [
     ...extractedToSuggestions(extracted),
     ...derivedToSuggestions(derived),
-    ...metricAlerts.map(alert => ({
-      type: 'build' as const,
-      priority: alert.priority === 'urgent' ? 'high' as const : 'medium' as const,
-      title: `Metric-driven: ${alert.pattern}`,
-      description: alert.suggestion,
-      action: 'Build automation for this pattern',
-      confidence: alert.confidence,
-      references: alert.evidence
-    }))
+    ...metricAlerts.map(alert => {
+      const isPredictive = alert.predictionType === 'predictive';
+      const prefix = isPredictive
+        ? `${alert.predictionSource || 'Predictive'}`
+        : 'Metric-driven';
+
+      return {
+        type: 'build' as const,
+        priority: alert.priority === 'urgent' ? 'high' as const : 'medium' as const,
+        title: `${prefix}: ${alert.pattern}`,
+        description: alert.suggestion,
+        action: isPredictive ? `${alert.predictionDetails?.action.specifics || 'Consider this prediction'}` : 'Build automation for this pattern',
+        confidence: alert.confidence,
+        references: alert.evidence
+      };
+    })
   ];
 
   // Optionally include git
@@ -340,14 +347,14 @@ function formatSuggestionsMarkdown(result: AnalysisResult): string {
 /**
  * Main execution
  */
-function main() {
+async function main() {
   const args = process.argv.slice(2);
   const jsonOutput = args.includes('--json');
   const verbose = args.includes('--verbose');
   const includeGit = args.includes('--git');
 
   try {
-    const result = analyzeContext(includeGit);
+    const result = await analyzeContext(includeGit);
 
     if (jsonOutput) {
       console.log(JSON.stringify(result, null, 2));
@@ -377,4 +384,7 @@ function main() {
   }
 }
 
-main();
+main().catch(error => {
+  console.error('❌ Unhandled error:', error);
+  process.exit(1);
+});

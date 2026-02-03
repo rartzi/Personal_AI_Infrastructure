@@ -3,16 +3,18 @@
 /**
  * threshold-alert.ts
  *
- * Phase 4: Mid-Session Threshold Alerts
+ * Phase 4: Mid-Session Threshold Alerts (Enhanced with Predictions)
  *
  * Runs periodically (every 30 minutes) to check for urgent patterns
- * that have crossed thresholds. Surfaces high-value automation
- * opportunities mid-session when confidence is very high (90%+).
+ * that have crossed thresholds. Surfaces BOTH reactive patterns and
+ * predictive suggestions mid-session when confidence is very high (90%+).
  *
  * Features:
  * - Deduplication: Won't alert same pattern twice per day
  * - Rate limiting: Max 2 alerts per day
  * - Cooldown: 120 minute minimum between alerts
+ * - NEW: Predictive alerts (goal-based, trajectory, realignment)
+ * - NEW: Differentiated display (reactive vs predictive)
  *
  * Not invoked directly - would be called by a background process or timer.
  * For now, this is a reference implementation for future activation.
@@ -93,18 +95,42 @@ export async function checkForUrgentPatterns() {
   // Surface the top alert
   const topAlert = newAlerts[0];
 
+  const alertType = topAlert.predictionType === 'predictive' ? 'PREDICTIVE' : 'REACTIVE';
+  const emoji = topAlert.predictionType === 'predictive' ? '🔮' : '📊';
+
   console.error('\n' + '━'.repeat(60));
-  console.error('🔥 FLYWHEEL ALERT - High-Value Automation Opportunity');
+  console.error(`🔥 FLYWHEEL ALERT - ${alertType} Suggestion`);
   console.error('━'.repeat(60));
+  console.error(`\n${emoji} ${topAlert.pattern}`);
   console.error(`\n${topAlert.suggestion}`);
-  console.error(`\nPattern: ${topAlert.pattern}`);
-  console.error(`Occurrences: ${topAlert.count}`);
-  console.error(`Confidence: ${topAlert.confidence}%`);
-  if (topAlert.estimatedSavings) {
-    console.error(`Potential savings: ${topAlert.estimatedSavings}`);
+
+  if (topAlert.predictionType === 'predictive' && topAlert.predictionSource) {
+    console.error(`\nSource: ${topAlert.predictionSource}`);
   }
-  console.error('\nThis pattern crossed the urgency threshold.');
-  console.error('Consider building automation now.\n');
+
+  if (topAlert.count > 0) {
+    console.error(`Occurrences: ${topAlert.count}`);
+  }
+  console.error(`Confidence: ${topAlert.confidence}%`);
+
+  if (topAlert.telosAlignment) {
+    console.error(`Telos Alignment: ${topAlert.telosAlignment.toFixed(2)}x`);
+  }
+
+  if (topAlert.estimatedSavings) {
+    console.error(`Impact: ${topAlert.estimatedSavings}`);
+  }
+
+  if (topAlert.telosNote) {
+    console.error(`\n📍 ${topAlert.telosNote}`);
+  }
+
+  if (topAlert.predictionType === 'predictive') {
+    console.error('\nThis is a proactive prediction based on your goals/trajectory.');
+  } else {
+    console.error('\nThis pattern crossed the urgency threshold.');
+  }
+  console.error('Consider taking action now.\n');
   console.error('━'.repeat(60) + '\n');
 
   // Update state

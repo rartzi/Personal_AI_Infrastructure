@@ -3,10 +3,15 @@
 /**
  * threshold-monitor.ts
  *
- * Phase 3: Threshold Monitoring for Self-Improvement Flywheel
+ * Phase 3-4: Threshold Monitoring + Prediction Layer Integration
  *
  * Monitors aggregated metrics against configured thresholds to detect
- * high-value automation opportunities that warrant user notification.
+ * high-value automation opportunities. NOW ENHANCED with prediction layer
+ * for proactive suggestions before patterns emerge.
+ *
+ * TWO DETECTION MODES:
+ * 1. REACTIVE: Detects patterns after they occur (original behavior)
+ * 2. PREDICTIVE: Forecasts needs from goals and trajectories (Phase 3.5)
  *
  * Urgency Levels:
  * - URGENT (90%+ confidence): 5+ same-day OR 15+ weekly → mid-session interrupt
@@ -16,12 +21,18 @@
  * Usage:
  *   bun run tools/threshold-monitor.ts              # Check today
  *   bun run tools/threshold-monitor.ts --verbose    # Show all detections
+ *   bun run tools/threshold-monitor.ts --reactive-only  # Disable predictions
  */
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { aggregateDay, aggregatePeriod, type DailySummary } from './metric-aggregator';
 import { loadTelos, calculateTelosAlignment, type TelosProfile } from './telos-extractor';
+import { predictFromGoals } from './goal-predictor';
+import { forecastTrajectories } from './trajectory-forecaster';
+import { monitorToolHealth } from './tool-health-monitor';
+import { analyzeOpportunityCost } from './opportunity-cost-analyzer';
+import { orchestratePredictions, type PredictiveSuggestion } from './prediction-orchestrator';
 
 const HOME = process.env.HOME!;
 const METRICS_DIR = join(HOME, '.claude/metrics');
@@ -33,12 +44,17 @@ export interface ThresholdAlert {
   pattern: string;
   count: number;
   confidence: number;
-  telosAlignment?: number;      // NEW: Telos multiplier applied
-  telosAdjustedConfidence?: number;  // NEW: Final confidence after telos
+  telosAlignment?: number;      // Telos multiplier applied
+  telosAdjustedConfidence?: number;  // Final confidence after telos
   suggestion: string;
   estimatedSavings?: string;
   evidence: string[];
-  telosNote?: string;          // NEW: Why this matters for telos
+  telosNote?: string;          // Why this matters for telos
+
+  // NEW: Prediction layer fields
+  predictionType?: 'reactive' | 'predictive';
+  predictionSource?: 'goal-based' | 'trajectory' | 'deprecation' | 'realignment';
+  predictionDetails?: PredictiveSuggestion;
 }
 
 interface ThresholdConfig {
@@ -303,9 +319,71 @@ function checkMonthlyThresholds(summaries: DailySummary[], config: ThresholdConf
 }
 
 /**
- * Main threshold check - combines all timeframes (TELOS-AWARE)
+ * Convert PredictiveSuggestion to ThresholdAlert format
  */
-export function checkThresholds(): ThresholdAlert[] {
+function predictiveToAlert(prediction: PredictiveSuggestion): ThresholdAlert {
+  // Map prediction priority to alert priority
+  const alertPriority: ThresholdAlert['priority'] =
+    prediction.priority === 'critical' ? 'urgent' :
+    prediction.priority === 'high' ? 'high' : 'strategic';
+
+  return {
+    priority: alertPriority,
+    pattern: prediction.title,
+    count: 0,  // Predictions don't have occurrence counts
+    confidence: prediction.confidence,
+    telosAlignment: prediction.telosAlignment / 100,  // Convert to multiplier
+    telosAdjustedConfidence: prediction.confidence * (prediction.telosAlignment / 100),
+    suggestion: prediction.description,
+    estimatedSavings: prediction.estimatedImpact,
+    evidence: [
+      `Type: ${prediction.type}`,
+      `Timeframe: ${prediction.timeframe}`,
+      prediction.reasoning
+    ],
+    telosNote: `Strategic value: ${prediction.strategicValue.toFixed(0)}`,
+    predictionType: 'predictive',
+    predictionSource: prediction.type,
+    predictionDetails: prediction
+  };
+}
+
+/**
+ * Run prediction layer and convert to alerts
+ */
+function runPredictionLayer(telos: TelosProfile, summaries: DailySummary[]): ThresholdAlert[] {
+  try {
+    console.error('🔮 Running prediction layer...\n');
+
+    // Run all prediction engines
+    const goalPredictions = predictFromGoals(telos);
+    const trajectories = forecastTrajectories(summaries);
+    const toolHealth = monitorToolHealth();
+    const opportunityCost = analyzeOpportunityCost(summaries, telos);
+
+    // Orchestrate predictions
+    const predictions = orchestratePredictions(
+      goalPredictions,
+      trajectories,
+      toolHealth,
+      opportunityCost,
+      telos
+    );
+
+    console.error(`   Generated ${predictions.length} predictions\n`);
+
+    // Convert to alerts
+    return predictions.map(predictiveToAlert);
+  } catch (e) {
+    console.error(`⚠️  Prediction layer error: ${e}\n`);
+    return [];
+  }
+}
+
+/**
+ * Main threshold check - combines REACTIVE and PREDICTIVE detection
+ */
+export function checkThresholds(options?: { reactiveOnly?: boolean }): ThresholdAlert[] {
   const config = loadConfig();
   const telos = loadTelos(24);  // Cache for 24 hours
   const alerts: ThresholdAlert[] = [];
@@ -313,17 +391,34 @@ export function checkThresholds(): ThresholdAlert[] {
   console.error(`🎯 Using telos profile: ${getHighestIdentity(telos)} (${telos.identity[getHighestIdentity(telos) as keyof typeof telos.identity]}%)\n`);
 
   try {
+    // REACTIVE DETECTION (original behavior)
+    console.error('📊 Running reactive pattern detection...\n');
+
     // Check today with telos awareness
     const today = aggregateDay(new Date());
-    alerts.push(...checkSameDayThresholds(today, config, telos));
+    const sameDayAlerts = checkSameDayThresholds(today, config, telos);
+    sameDayAlerts.forEach(a => a.predictionType = 'reactive');
+    alerts.push(...sameDayAlerts);
 
     // Check last 7 days for weekly patterns
     const weeklySummaries = aggregatePeriod(7);
-    alerts.push(...checkWeeklyThresholds(weeklySummaries, config, telos));
+    const weeklyAlerts = checkWeeklyThresholds(weeklySummaries, config, telos);
+    weeklyAlerts.forEach(a => a.predictionType = 'reactive');
+    alerts.push(...weeklyAlerts);
 
     // Check last 30 days for strategic patterns
     const monthlySummaries = aggregatePeriod(30);
-    alerts.push(...checkMonthlyThresholds(monthlySummaries, config, telos));
+    const monthlyAlerts = checkMonthlyThresholds(monthlySummaries, config, telos);
+    monthlyAlerts.forEach(a => a.predictionType = 'reactive');
+    alerts.push(...monthlyAlerts);
+
+    console.error(`   Detected ${alerts.length} reactive patterns\n`);
+
+    // PREDICTIVE DETECTION (Phase 3.5 - NEW)
+    if (!options?.reactiveOnly) {
+      const predictiveAlerts = runPredictionLayer(telos, monthlySummaries);
+      alerts.push(...predictiveAlerts);
+    }
   } catch (e) {
     console.error(`Error checking thresholds: ${e}`);
   }
@@ -333,7 +428,7 @@ export function checkThresholds(): ThresholdAlert[] {
   alerts.sort((a, b) => {
     const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
     if (priorityDiff !== 0) return priorityDiff;
-    return b.confidence - a.confidence;
+    return (b.telosAdjustedConfidence || b.confidence) - (a.telosAdjustedConfidence || a.confidence);
   });
 
   // Deduplicate - if same pattern appears at multiple priorities, keep highest
@@ -353,18 +448,23 @@ export function checkThresholds(): ThresholdAlert[] {
 function main() {
   const args = process.argv.slice(2);
   const verbose = args.includes('--verbose') || args.includes('-v');
+  const reactiveOnly = args.includes('--reactive-only');
 
   console.error('🔍 Checking thresholds...\n');
 
-  const alerts = checkThresholds();
+  const alerts = checkThresholds({ reactiveOnly });
 
   if (alerts.length === 0) {
     console.log('✅ No patterns have crossed alert thresholds');
     return;
   }
 
+  const reactiveCount = alerts.filter(a => a.predictionType === 'reactive').length;
+  const predictiveCount = alerts.filter(a => a.predictionType === 'predictive').length;
+
   console.log(`\n${'='.repeat(60)}`);
   console.log('THRESHOLD ALERTS');
+  console.log(`Reactive: ${reactiveCount} | Predictive: ${predictiveCount}`);
   console.log(`${'='.repeat(60)}\n`);
 
   const urgent = alerts.filter(a => a.priority === 'urgent');
@@ -374,8 +474,16 @@ function main() {
   if (urgent.length > 0) {
     console.log('🔴 URGENT (Immediate Action Recommended)\n');
     for (const alert of urgent) {
-      console.log(`Pattern: ${alert.pattern}`);
-      console.log(`Count: ${alert.count} | Base: ${alert.confidence}% | Telos-Adjusted: ${alert.telosAdjustedConfidence?.toFixed(0)}%`);
+      const badge = alert.predictionType === 'predictive' ? '🔮' : '📊';
+      console.log(`${badge} ${alert.pattern}`);
+      if (alert.predictionType === 'predictive') {
+        console.log(`Type: PREDICTIVE (${alert.predictionSource})`);
+      }
+      if (alert.count > 0) {
+        console.log(`Count: ${alert.count} | Base: ${alert.confidence}% | Telos-Adjusted: ${alert.telosAdjustedConfidence?.toFixed(0)}%`);
+      } else {
+        console.log(`Confidence: ${alert.confidence}%`);
+      }
       if (alert.telosAlignment) {
         console.log(`Telos Alignment: ${alert.telosAlignment.toFixed(2)}x`);
       }
@@ -384,9 +492,9 @@ function main() {
         console.log(`📍 ${alert.telosNote}`);
       }
       if (alert.estimatedSavings) {
-        console.log(`Savings: ${alert.estimatedSavings}`);
+        console.log(`Impact: ${alert.estimatedSavings}`);
       }
-      if (verbose) {
+      if (verbose && alert.evidence) {
         console.log(`Evidence: ${alert.evidence.join(', ')}`);
       }
       console.log();
@@ -396,8 +504,16 @@ function main() {
   if (high.length > 0) {
     console.log('🟡 HIGH PRIORITY (Next Session)\n');
     for (const alert of high) {
-      console.log(`Pattern: ${alert.pattern}`);
-      console.log(`Count: ${alert.count} | Base: ${alert.confidence}% | Telos-Adjusted: ${alert.telosAdjustedConfidence?.toFixed(0)}%`);
+      const badge = alert.predictionType === 'predictive' ? '🔮' : '📊';
+      console.log(`${badge} ${alert.pattern}`);
+      if (alert.predictionType === 'predictive') {
+        console.log(`Type: PREDICTIVE (${alert.predictionSource})`);
+      }
+      if (alert.count > 0) {
+        console.log(`Count: ${alert.count} | Base: ${alert.confidence}% | Telos-Adjusted: ${alert.telosAdjustedConfidence?.toFixed(0)}%`);
+      } else {
+        console.log(`Confidence: ${alert.confidence}%`);
+      }
       if (alert.telosAlignment) {
         console.log(`Telos Alignment: ${alert.telosAlignment.toFixed(2)}x`);
       }
