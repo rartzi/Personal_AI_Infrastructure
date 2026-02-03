@@ -67,6 +67,11 @@ credentials/
 .claude/pai_backups/
 .claude/.pai-sync-history
 
+# Self-improvement flywheel metrics (privacy)
+.claude/metrics/
+!.claude/metrics/README.md
+!.claude/metrics/config.json
+
 # WRONG history location (prevent mistakes)
 # The correct location is .claude/History/ (capital H)
 /history/

@@ -85,6 +85,16 @@
         "hooks": [
           {
             "type": "command",
+            "command": "${PAI_DIR}/hooks/post-tool-use-metrics.ts",
+            "comment": "Self-improvement flywheel: automatic metric collection"
+          },
+          {
+            "type": "command",
+            "command": "${PAI_DIR}/hooks/auto-diff-after-edit.ts",
+            "comment": "Auto-diff after Edit - shows what changed (solves 27x verification loop)"
+          },
+          {
+            "type": "command",
             "command": "${PAI_DIR}/hooks/capture-tool-output.ts"
           },
           {
