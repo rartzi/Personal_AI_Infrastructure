@@ -20,11 +20,11 @@ import { appendFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 
 interface PostToolUseContext {
-  tool: string;
-  args: any;
-  result: any;
-  duration?: number;
-  sessionId?: string;
+  tool_name: string;
+  tool_input: any;
+  tool_response: any;
+  conversation_id?: string;
+  timestamp?: string;
   error?: any;
 }
 
@@ -43,23 +43,23 @@ interface ToolUsageEntry {
 /**
  * Extract lightweight context from tool usage
  */
-function extractContext(tool: string, args: any, result: any, error: any): ToolUsageEntry['context'] {
+function extractContext(tool_name: string, tool_input: any, tool_response: any, error: any): ToolUsageEntry['context'] {
   const context: ToolUsageEntry['context'] = {};
 
   // File operations
-  if (tool === 'Read' || tool === 'Edit' || tool === 'Write') {
+  if (tool_name === 'Read' || tool_name === 'Edit' || tool_name === 'Write') {
     context.fileCount = 1;
   }
 
   // Bash commands
-  if (tool === 'Bash' && args?.command) {
-    const command = args.command;
+  if (tool_name === 'Bash' && tool_input?.command) {
+    const command = tool_input.command;
     // Extract first word as command type
     context.commandType = command.split(/\s+/)[0] || null;
   }
 
   // Error tracking
-  if (error) {
+  if (error || tool_response?.error) {
     context.hasError = true;
   }
 
@@ -80,7 +80,7 @@ async function main() {
     }
 
     const context: PostToolUseContext = JSON.parse(stdin);
-    const { tool, args, result, duration = 0, sessionId = 'unknown', error } = context;
+    const { tool_name, tool_input, tool_response, conversation_id = 'unknown', timestamp, error } = context;
 
     // Prepare metrics directory
     const now = new Date();
@@ -94,11 +94,11 @@ async function main() {
 
     // Create log entry
     const logEntry: ToolUsageEntry = {
-      timestamp: now.toISOString(),
-      tool,
-      duration,
-      sessionId,
-      context: extractContext(tool, args, result, error)
+      timestamp: timestamp || now.toISOString(),
+      tool: tool_name,
+      duration: 0, // Claude Code doesn't provide duration
+      sessionId: conversation_id,
+      context: extractContext(tool_name, tool_input, tool_response, error)
     };
 
     // Append to JSONL
