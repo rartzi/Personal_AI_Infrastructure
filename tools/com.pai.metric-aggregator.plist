@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pai.metric-aggregator</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/bun</string>
+        <string>run</string>
+        <string>__PAI_DIR__/tools/metric-aggregator.ts</string>
+        <string>--today</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>23</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.claude/metrics/aggregator.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.claude/metrics/aggregator.error.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>__HOME__</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>Comment</key>
+    <string>PAI Self-Improvement Flywheel: Daily metric aggregation at 23:30</string>
+</dict>
+</plist>
