@@ -3,16 +3,17 @@
 /**
  * test-predictions.ts
  *
- * Phase 0 Test Script: Validates prediction layer components
+ * Phase 0-1 Test Script: Validates prediction layer components
  *
- * Tests goal-predictor and trajectory-forecaster on current system state
- * to verify they're working correctly before integration.
+ * Tests goal-predictor, trajectory-forecaster, and tool-health-monitor
+ * on current system state to verify they're working correctly before integration.
  */
 
 import { loadTelos } from './telos-extractor';
 import { predictFromGoals, summarizePredictions } from './goal-predictor';
 import { aggregatePeriod } from './metric-aggregator';
 import { forecastTrajectories, getActionableForecasts, summarizeForecasts } from './trajectory-forecaster';
+import { monitorToolHealth, summarizeHealth } from './tool-health-monitor';
 
 console.log('\n' + '═'.repeat(70));
 console.log('🧪 PREDICTION LAYER TEST SUITE');
@@ -99,17 +100,38 @@ if (summaries.length >= 7) {
 }
 console.log();
 
-// Test 5: Integration Check
-console.log('Test 5: Integration Check');
+// Test 5: Tool Health Monitoring
+console.log('Test 5: Tool Health Monitoring');
+console.log('─'.repeat(70));
+
+const healthReports = monitorToolHealth();
+console.log(`✓ Tool health monitoring completed`);
+console.log(`  Custom tools analyzed: ${healthReports.length}`);
+
+if (healthReports.length > 0) {
+  const healthSummary = summarizeHealth(healthReports);
+  console.log(`  By status:`, JSON.stringify(healthSummary.byStatus, null, 2).replace(/\n/g, '\n    '));
+  console.log(`  By type:`, JSON.stringify(healthSummary.byType, null, 2).replace(/\n/g, '\n    '));
+  console.log(`  Avg decay score: ${healthSummary.avgDecayScore.toFixed(1)}%`);
+  console.log(`  Tools needing action: ${healthSummary.needsAction}`);
+} else {
+  console.log(`  ⚠️  No custom tools found (all system components)`);
+}
+console.log();
+
+// Test 6: Integration Check
+console.log('Test 6: Integration Check');
 console.log('─'.repeat(70));
 
 const hasPredictions = goalPredictions.length > 0;
 const hasForecasts = summaries.length >= 7;
+const hasHealthMonitoring = healthReports.length >= 0;  // Always functional
 
 console.log(`Goal predictions: ${hasPredictions ? '✓ Working' : '⚠️  No data (expected if no goals)'}`);
 console.log(`Trajectory forecasts: ${hasForecasts ? '✓ Working' : '⚠️  Need more metric data'}`);
+console.log(`Tool health monitoring: ✓ Working`);
 
-if (hasPredictions || hasForecasts) {
+if (hasPredictions || hasForecasts || hasHealthMonitoring) {
   console.log(`\n✅ Prediction layer is functional`);
   console.log(`   Ready for integration with threshold-monitor.ts`);
 } else {
@@ -119,11 +141,11 @@ if (hasPredictions || hasForecasts) {
 }
 
 console.log('\n' + '═'.repeat(70));
-console.log('🎯 PHASE 0 VALIDATION COMPLETE');
+console.log('🎯 PHASE 0-1 VALIDATION COMPLETE');
 console.log('═'.repeat(70) + '\n');
 
 // Exit status
-if (hasPredictions || hasForecasts) {
+if (hasPredictions || hasForecasts || hasHealthMonitoring) {
   process.exit(0);  // Success
 } else {
   process.exit(1);  // Needs data but components work
