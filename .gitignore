@@ -70,3 +70,6 @@ credentials/
 # WRONG history location (prevent mistakes)
 # The correct location is .claude/History/ (capital H)
 /history/
+
+# Git worktrees
+.worktrees/
