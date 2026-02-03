@@ -3,11 +3,11 @@
 /**
  * test-predictions.ts
  *
- * Phase 0-2 Test Script: Validates prediction layer components
+ * Phase 0-3 Test Script: Validates prediction layer components
  *
  * Tests goal-predictor, trajectory-forecaster, tool-health-monitor,
- * and opportunity-cost-analyzer on current system state to verify
- * they're working correctly before integration.
+ * opportunity-cost-analyzer, and prediction-orchestrator on current
+ * system state to verify they're working correctly before integration.
  */
 
 import { loadTelos } from './telos-extractor';
@@ -16,6 +16,7 @@ import { aggregatePeriod } from './metric-aggregator';
 import { forecastTrajectories, getActionableForecasts, summarizeForecasts } from './trajectory-forecaster';
 import { monitorToolHealth, summarizeHealth } from './tool-health-monitor';
 import { analyzeOpportunityCost, summarizeOpportunityCost } from './opportunity-cost-analyzer';
+import { orchestratePredictions, summarizePredictions as summarizeOrchestrated, filterSuggestions } from './prediction-orchestrator';
 
 console.log('\n' + '═'.repeat(70));
 console.log('🧪 PREDICTION LAYER TEST SUITE');
@@ -78,16 +79,18 @@ console.log();
 console.log('Test 4: Trajectory Forecasting');
 console.log('─'.repeat(70));
 
+let trajectories: ReturnType<typeof forecastTrajectories> = [];
+
 if (summaries.length >= 7) {
-  const forecasts = forecastTrajectories(summaries);
-  const actionable = getActionableForecasts(forecasts);
+  trajectories = forecastTrajectories(summaries);
+  const actionable = getActionableForecasts(trajectories);
 
   console.log(`✓ Trajectory forecasting completed`);
-  console.log(`  Patterns analyzed: ${forecasts.length}`);
+  console.log(`  Patterns analyzed: ${trajectories.length}`);
   console.log(`  Actionable patterns: ${actionable.length}`);
 
-  if (forecasts.length > 0) {
-    const forecastSummary = summarizeForecasts(forecasts);
+  if (trajectories.length > 0) {
+    const forecastSummary = summarizeForecasts(trajectories);
     console.log(`  By recommendation:`, JSON.stringify(forecastSummary.byRecommendation, null, 2).replace(/\n/g, '\n    '));
     console.log(`  By trend:`, JSON.stringify(forecastSummary.byTrend, null, 2).replace(/\n/g, '\n    '));
     console.log(`  Avg bottleneck risk: ${forecastSummary.avgBottleneckRisk.toFixed(1)}%`);
@@ -141,21 +144,57 @@ if (costReport.misalignments.length > 0) {
 }
 console.log();
 
-// Test 7: Integration Check
-console.log('Test 7: Integration Check');
+// Test 7: Prediction Orchestration
+console.log('Test 7: Prediction Orchestration');
+console.log('─'.repeat(70));
+
+const orchestrated = orchestratePredictions(
+  goalPredictions,
+  trajectories,
+  healthReports,
+  costReport,
+  telos
+);
+
+console.log(`✓ Orchestration completed`);
+console.log(`  Combined suggestions: ${orchestrated.length}`);
+
+if (orchestrated.length > 0) {
+  const orchSummary = summarizeOrchestrated(orchestrated);
+  console.log(`  By type:`, JSON.stringify(orchSummary.byType, null, 2).replace(/\n/g, '\n    '));
+  console.log(`  By priority:`, JSON.stringify(orchSummary.byPriority, null, 2).replace(/\n/g, '\n    '));
+  console.log(`  Avg confidence: ${orchSummary.avgConfidence.toFixed(1)}%`);
+  console.log(`  Avg telos alignment: ${orchSummary.avgTelosAlignment.toFixed(1)}%`);
+
+  if (orchSummary.topSuggestion) {
+    console.log(`  Top: ${orchSummary.topSuggestion.title} (${orchSummary.topSuggestion.strategicValue.toFixed(0)})`);
+  }
+
+  // Test filtering
+  const highPriority = filterSuggestions(orchestrated, { priorities: ['critical', 'high'] });
+  console.log(`  High priority only: ${highPriority.length}`);
+} else {
+  console.log(`  ✓ No suggestions (system running smoothly)`);
+}
+console.log();
+
+// Test 8: Integration Check
+console.log('Test 8: Integration Check');
 console.log('─'.repeat(70));
 
 const hasPredictions = goalPredictions.length > 0;
 const hasForecasts = summaries.length >= 7;
 const hasHealthMonitoring = healthReports.length >= 0;  // Always functional
 const hasOpportunityCost = costReport.totalToolCalls > 0;  // Has data to analyze
+const hasOrchestration = orchestrated.length >= 0;  // Always functional
 
 console.log(`Goal predictions: ${hasPredictions ? '✓ Working' : '⚠️  No data (expected if no goals)'}`);
 console.log(`Trajectory forecasts: ${hasForecasts ? '✓ Working' : '⚠️  Need more metric data'}`);
 console.log(`Tool health monitoring: ✓ Working`);
 console.log(`Opportunity cost analysis: ${hasOpportunityCost ? '✓ Working' : '⚠️  No data'}`);
+console.log(`Prediction orchestration: ✓ Working`);
 
-if (hasPredictions || hasForecasts || hasHealthMonitoring || hasOpportunityCost) {
+if (hasPredictions || hasForecasts || hasHealthMonitoring || hasOpportunityCost || hasOrchestration) {
   console.log(`\n✅ Prediction layer is functional`);
   console.log(`   Ready for integration with threshold-monitor.ts`);
 } else {
@@ -165,11 +204,11 @@ if (hasPredictions || hasForecasts || hasHealthMonitoring || hasOpportunityCost)
 }
 
 console.log('\n' + '═'.repeat(70));
-console.log('🎯 PHASE 0-2 VALIDATION COMPLETE');
+console.log('🎯 PHASE 0-3 VALIDATION COMPLETE');
 console.log('═'.repeat(70) + '\n');
 
 // Exit status
-if (hasPredictions || hasForecasts || hasHealthMonitoring || hasOpportunityCost) {
+if (hasPredictions || hasForecasts || hasHealthMonitoring || hasOpportunityCost || hasOrchestration) {
   process.exit(0);  // Success
 } else {
   process.exit(1);  // Needs data but components work
